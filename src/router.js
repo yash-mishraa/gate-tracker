@@ -10,7 +10,11 @@ export function registerRoute(path, handler) {
 }
 
 export function navigate(path) {
-  window.location.hash = path;
+  if (window.location.hash === '#' + path || window.location.hash === path) {
+    handleRoute();
+  } else {
+    window.location.hash = path;
+  }
 }
 
 export function getCurrentRoute() {
