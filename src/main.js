@@ -17,8 +17,11 @@ import './styles/pages/notes.css';
 import './styles/pages/reflection.css';
 import './styles/pages/calendar.css';
 
+import './styles/auth.css';
+
 import { registerRoute, initRouter } from './router.js';
-import { seedIfEmpty } from './db.js';
+import { seedIfEmpty, setUserId } from './db.js';
+import { observeAuth, logIn, signUp, logOut } from './auth.js';
 
 import { dashboardPage } from './pages/dashboard.js';
 import { plannerPage } from './pages/planner.js';
@@ -87,24 +90,106 @@ function initMobileSidebar() {
   });
 }
 
+// ── Auth Flow ──
+function initAuthFlow() {
+  const authScreen = document.getElementById('auth-screen');
+  const appScreen = document.getElementById('app');
+  const authForm = document.getElementById('auth-form');
+  const authToggleLink = document.getElementById('auth-toggle-link');
+  const authToggleText = document.getElementById('auth-toggle-text');
+  const authSubmitBtn = document.getElementById('auth-submit-btn');
+  const errorMsg = document.getElementById('auth-error-msg');
+  const loader = document.getElementById('auth-loader');
+
+  let mode = 'login'; // 'login' or 'signup'
+
+  authToggleLink.addEventListener('click', () => {
+    mode = mode === 'login' ? 'signup' : 'login';
+    if (mode === 'signup') {
+      authSubmitBtn.textContent = 'Sign Up';
+      authToggleText.innerHTML = `Already have an account? <a id="auth-toggle-link">Log In</a>`;
+    } else {
+      authSubmitBtn.textContent = 'Log In';
+      authToggleText.innerHTML = `Don't have an account? <a id="auth-toggle-link">Sign Up</a>`;
+    }
+    errorMsg.style.display = 'none';
+    
+    // Re-attach listener to newly created anchor tag
+    document.getElementById('auth-toggle-link').addEventListener('click', () => authToggleLink.click());
+  });
+
+  authForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('auth-email').value;
+    const pwd = document.getElementById('auth-password').value;
+    
+    loader.style.display = 'flex';
+    errorMsg.style.display = 'none';
+
+    try {
+      if (mode === 'login') {
+        await logIn(email, pwd);
+      } else {
+        await signUp(email, pwd);
+      }
+      // Success is handled by observeAuth
+    } catch (err) {
+      errorMsg.textContent = err.message.replace('Firebase: ', '');
+      errorMsg.style.display = 'block';
+      loader.style.display = 'none';
+    }
+  });
+
+  document.getElementById('logout-btn').addEventListener('click', async () => {
+    await logOut();
+  });
+
+  let routerInitialized = false;
+
+  observeAuth(async (user) => {
+    loader.style.display = 'none';
+    if (user) {
+      // Logged in
+      authScreen.style.display = 'none';
+      appScreen.style.display = 'flex';
+      
+      // Partition local DB
+      setUserId(user.uid);
+      await seedIfEmpty();
+
+      if (!routerInitialized) {
+        registerRoute('/dashboard', dashboardPage);
+        registerRoute('/planner', plannerPage);
+        registerRoute('/subjects', subjectsPage);
+        registerRoute('/topics/:id', topicsPage);
+        registerRoute('/timer', timerPage);
+        registerRoute('/reflection', reflectionPage);
+        registerRoute('/analytics', analyticsPage);
+        registerRoute('/tests', testsPage);
+        registerRoute('/notes', notesPage);
+        registerRoute('/calendar', calendarPage);
+
+        initTheme();
+        initMobileSidebar();
+        initRouter();
+        routerInitialized = true;
+      } else {
+        // If they logged out and logged back in during the same session,
+        // force router to re-render the current view with the new user's DB.
+        window.dispatchEvent(new Event('hashchange'));
+      }
+    } else {
+      // Logged out
+      authScreen.style.display = 'flex';
+      appScreen.style.display = 'none';
+      document.getElementById('auth-password').value = '';
+    }
+  });
+}
+
 // ── Bootstrap ──
-async function init() {
-  await seedIfEmpty();
-
-  registerRoute('/dashboard', dashboardPage);
-  registerRoute('/planner', plannerPage);
-  registerRoute('/subjects', subjectsPage);
-  registerRoute('/topics/:id', topicsPage);
-  registerRoute('/timer', timerPage);
-  registerRoute('/reflection', reflectionPage);
-  registerRoute('/analytics', analyticsPage);
-  registerRoute('/tests', testsPage);
-  registerRoute('/notes', notesPage);
-  registerRoute('/calendar', calendarPage);
-
-  initTheme();
-  initMobileSidebar();
-  initRouter();
+function init() {
+  initAuthFlow();
 }
 
 init();

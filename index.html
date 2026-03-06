@@ -8,7 +8,40 @@
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
-  <div class="app-layout" id="app">
+  <!-- Auth Screen Overlay -->
+  <div id="auth-screen">
+    <div class="auth-card">
+      <div class="auth-logo">G</div>
+      <h2 class="auth-title">GATE Tracker</h2>
+      <p class="auth-subtitle">Sign in to sync your preparation data.</p>
+      
+      <div id="auth-error-msg" class="auth-error"></div>
+
+      <form id="auth-form" class="auth-form">
+        <div class="form-group">
+          <label class="form-label">Email</label>
+          <input type="email" id="auth-email" class="form-input" required placeholder="you@example.com" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input type="password" id="auth-password" class="form-input" required placeholder="••••••••" />
+        </div>
+        <button type="submit" id="auth-submit-btn" class="btn btn-primary auth-btn">Log In</button>
+      </form>
+      
+      <div class="auth-toggle">
+        <span id="auth-toggle-text">Don't have an account? <a id="auth-toggle-link">Sign Up</a></span>
+      </div>
+
+      <!-- Loading overlay for auth actions -->
+      <div id="auth-loader" style="display: none;">
+        <div class="spinner"></div>
+        <div>Authenticating...</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="app-layout" id="app" style="display: none;">
     <!-- Mobile Header -->
     <header class="mobile-header">
       <button class="hamburger" id="hamburger-btn" aria-label="Toggle menu">
@@ -71,11 +104,15 @@
         </a>
       </nav>
 
-      <div class="sidebar-footer">
+      <div class="sidebar-footer" style="display:flex; flex-direction:column; gap:var(--space-sm)">
         <button class="theme-toggle" id="theme-toggle">
           <svg id="theme-icon-dark" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
           <svg id="theme-icon-light" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
           <span id="theme-label">Dark</span>
+        </button>
+        <button class="theme-toggle" id="logout-btn" style="color:var(--danger-400)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+          <span>Log Out</span>
         </button>
       </div>
     </aside>

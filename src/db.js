@@ -4,10 +4,17 @@
 
 import { openDB } from 'idb';
 
-const DB_NAME = 'gateTrackerDB';
 const DB_VERSION = 2;
 
-let dbPromise;
+let DB_NAME = 'gateTrackerDB_anonymous'; // fallback
+let dbPromise = null;
+
+export function setUserId(uid) {
+  // Update the database name uniquely for this UID
+  DB_NAME = 'gateTrackerDB_' + uid;
+  // Reset the promise so getDB() opens the new database
+  dbPromise = null; 
+}
 
 export function getDB() {
   if (!dbPromise) {
