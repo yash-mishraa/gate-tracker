@@ -1,0 +1,166 @@
+/* Timer page styles (enhanced with mode tabs) */
+
+.timer-layout {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: var(--space-xl);
+  align-items: start;
+}
+
+.timer-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-2xl);
+}
+
+/* ── Mode Tabs ── */
+.timer-mode-tabs {
+  display: flex;
+  gap: var(--space-xs);
+  background: var(--bg-tertiary);
+  padding: 4px;
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-xl);
+}
+
+.timer-mode-tab {
+  padding: var(--space-sm) var(--space-lg);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: all var(--transition-fast);
+}
+
+.timer-mode-tab:hover {
+  color: var(--text-primary);
+}
+
+.timer-mode-tab.active {
+  background: var(--primary-600);
+  color: white;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+}
+
+/* ── Ring ── */
+.timer-display {
+  position: relative;
+  width: 280px;
+  height: 280px;
+  margin-bottom: var(--space-xl);
+}
+
+.timer-ring {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.timer-ring-bg {
+  fill: none;
+  stroke: var(--bg-tertiary);
+  stroke-width: 6;
+}
+
+.timer-ring-fill {
+  fill: none;
+  stroke: var(--primary-500);
+  stroke-width: 6;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.5s ease;
+}
+
+.timer-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.timer-time {
+  font-size: 3.5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.timer-label {
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+  margin-top: var(--space-xs);
+}
+
+.timer-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  margin-bottom: var(--space-xl);
+}
+
+.btn-timer {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.btn-timer-main {
+  width: 64px;
+  height: 64px;
+}
+
+.timer-sessions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.timer-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  border: 2px solid var(--border-color);
+  transition: all var(--transition-fast);
+}
+
+.timer-dot.active {
+  border-color: var(--primary-500);
+  box-shadow: 0 0 8px rgba(99, 102, 241, 0.3);
+}
+
+.timer-dot.completed {
+  background: var(--primary-500);
+  border-color: var(--primary-500);
+}
+
+.timer-log-msg {
+  margin-top: var(--space-md);
+  font-size: var(--text-sm);
+  color: var(--accent-400);
+  font-weight: 500;
+  animation: fadeIn 200ms ease-out;
+}
+
+.timer-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+@media (max-width: 900px) {
+  .timer-layout { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 480px) {
+  .timer-display { width: 220px; height: 220px; }
+  .timer-time { font-size: 2.5rem; }
+}

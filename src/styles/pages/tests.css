@@ -1,0 +1,45 @@
+/* Tests page styles (enhanced) */
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.test-strength-row {
+  display: flex;
+  gap: var(--space-md);
+}
+
+.test-strength-card {
+  flex: 1;
+  text-align: center;
+  padding: var(--space-lg) !important;
+}
+
+.test-subjects-checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-xs);
+  max-height: 200px;
+  overflow-y: auto;
+  padding: var(--space-sm);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+}
+
+.test-subj-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+
+.test-subj-check:hover { background: var(--bg-card); }
+
+@media (max-width: 640px) {
+  .test-strength-row { flex-direction: column; }
+  .test-subjects-checklist { grid-template-columns: 1fr; }
+}
