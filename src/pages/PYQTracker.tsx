@@ -3,6 +3,9 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type PyqTopic } from '../db';
 import { Card, Button, Input, ProgressBar } from '../components/ui';
 import { Plus, CheckCircle } from 'lucide-react';
+import { SubjectTag } from '../components/SubjectTag';
+import { getDeterministicSubjectColor, resolveSubjectColor } from '../utils/subjectColors';
+
 
 export default function PYQTracker() {
   const subjects = useLiveQuery(() => db.subjects.toArray(), []) || [];
@@ -45,7 +48,8 @@ export default function PYQTracker() {
     const existing = subjects.find(s => s.name.toLowerCase() === newSubjectName.trim().toLowerCase());
     
     if (!existing) {
-      await db.subjects.add({ name: newSubjectName.trim() });
+      const normalizedName = newSubjectName.trim();
+      await db.subjects.add({ name: normalizedName, color: getDeterministicSubjectColor(normalizedName) });
     }
     
     setNewSubjectName('');
@@ -219,12 +223,24 @@ export default function PYQTracker() {
           const subjAttempted = sTopics.reduce((acc, t) => acc + t.attemptedQuestions, 0);
           const subjTotal = sTopics.reduce((acc, t) => acc + t.totalQuestions, 0);
           const subjProgress = subjTotal === 0 ? 0 : (subjAttempted / subjTotal) * 100;
+          const subjectColor = resolveSubjectColor(subject);
 
           return (
-            <Card key={subject.id} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', padding: '1.5rem 2rem' }}>
+            <Card
+              key={subject.id}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '1.5rem',
+                padding: '1.5rem 2rem',
+                borderLeft: `4px solid ${subjectColor}`
+              }}
+            >
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '0.75rem' }}>
-                  <h2 style={{ fontSize: '1.5rem' }}>{subject.name}</h2>
+                  <h2 style={{ fontSize: '1.5rem' }}>
+                    <SubjectTag name={subject.name} color={subject.color} />
+                  </h2>
                   <span className="text-secondary" style={{ fontWeight: 600, fontSize: '0.875rem' }}>{Math.round(subjProgress)}% Matrix Complete</span>
                 </div>
                 <ProgressBar progress={subjProgress} tone="green" />

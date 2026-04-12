@@ -4,6 +4,9 @@ import { Card, Button } from '../components/ui';
 import { format, subDays, isSameDay, eachDayOfInterval } from 'date-fns';
 import { LineChart, Line, XAxis, Tooltip, ResponsiveContainer, YAxis } from 'recharts';
 import { useNavigate } from 'react-router-dom';
+import { SubjectTag } from '../components/SubjectTag';
+import { resolveSubjectColor } from '../utils/subjectColors';
+
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -132,6 +135,8 @@ export default function Dashboard() {
     .sort((a, b) => b.priority - a.priority)
     .slice(0, 3); // Max 3 cards
 
+  const subjectById = new Map(subjects.map(subject => [subject.id!, subject]));
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
       <div>
@@ -191,11 +196,15 @@ export default function Dashboard() {
         <h3 style={{ fontSize: '1rem', marginBottom: '1rem', fontWeight: 500 }}>Target Acquisition Matrix</h3>
         {finalRecommendations.length > 0 ? (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1rem' }}>
-            {finalRecommendations.map(rec => (
+            {finalRecommendations.map(rec => {
+              const subject = subjectById.get(rec.topic.subjectId);
+              const subjectColor = resolveSubjectColor(subject);
+
+              return (
               <Card
                 key={rec.topic.id}
                 className="clickable"
-                style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}
+                style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', borderLeft: `4px solid ${subjectColor}` }}
                 onClick={() => navigate('/timer')}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -204,6 +213,7 @@ export default function Dashboard() {
                   </span>
                   <span className="text-secondary" style={{ fontSize: '0.75rem' }}>PRIORITY {rec.priority}</span>
                 </div>
+                {subject && <SubjectTag name={subject.name} color={subject.color} />}
                 <h4 style={{ fontSize: '1.125rem', fontWeight: 600, margin: '0.25rem 0' }}>{rec.topic.name}</h4>
                 <p className="text-muted" style={{ fontSize: '0.875rem', margin: 0, fontStyle: 'italic' }}>{rec.reason}</p>
 
@@ -211,7 +221,7 @@ export default function Dashboard() {
                   <Button variant="secondary" style={{ width: '100%', padding: '0.4rem', fontSize: '0.875rem' }}>Push to Timer</Button>
                 </div>
               </Card>
-            ))}
+            )})}
           </div>
         ) : (
           <Card style={{ padding: '2rem', textAlign: 'center' }}>
@@ -236,11 +246,13 @@ export default function Dashboard() {
             return (
               <div key={sub.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem' }}>
-                  <span style={{ fontWeight: 500 }}>{sub.name}</span>
+                  <span style={{ fontWeight: 500 }}>
+                    <SubjectTag name={sub.name} color={sub.color} />
+                  </span>
                   <span className="text-secondary">{(totalMins / 60).toFixed(1)} hrs</span>
                 </div>
                 <div style={{ width: '100%', height: '6px', backgroundColor: 'var(--surface-hover)', borderRadius: '2px', overflow: 'hidden' }}>
-                  <div style={{ width: `${focusWidth}%`, height: '100%', backgroundColor: 'rgba(59, 130, 246, 0.25)' }} />
+                  <div style={{ width: `${focusWidth}%`, height: '100%', backgroundColor: resolveSubjectColor(sub) }} />
                 </div>
               </div>
             );

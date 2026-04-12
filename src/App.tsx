@@ -1,6 +1,7 @@
 import React, { Suspense } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components/Layout';
+import { ensureSubjectColors } from './utils/subjectColorMigration';
 
 const Dashboard = React.lazy(() => import('./pages/Dashboard'));
 const Planner = React.lazy(() => import('./pages/Planner'));
@@ -40,6 +41,10 @@ const MinimalLoader = () => (
 );
 
 export default function App() {
+  React.useEffect(() => {
+    void ensureSubjectColors();
+  }, []);
+
   return (
     <BrowserRouter>
       <ErrorBoundary>

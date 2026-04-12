@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { Card, Button, Input, Select } from '../components/ui';
-import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, Tooltip, YAxis } from 'recharts';
+import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, Tooltip, YAxis, Cell } from 'recharts';
 import { format, differenceInDays } from 'date-fns';
 import { Target, TrendingUp, TrendingDown, Clock, Trash2, Plus } from 'lucide-react';
+import { resolveSubjectColor } from '../utils/subjectColors';
 
 export default function Tests() {
   const subjects = useLiveQuery(() => db.subjects.toArray()) ?? [];
@@ -121,10 +122,14 @@ export default function Tests() {
   });
 
   const subjectChartData = Array.from(subjectAggregatesMap.entries()).map(([subId, data]) => {
-    const subName = subjects.find(s => s.id === subId)?.name || 'Unknown';
+    const subject = subjects.find(s => s.id === subId);
+    const subName = subject?.name || 'Unknown';
+
     return {
+      subjectId: subId,
       subject: subName,
-      accuracy: Math.round((data.ob / data.tot) * 100)
+       accuracy: Math.round((data.ob / data.tot) * 100),
+      color: resolveSubjectColor(subject)
     };
   }).sort((a,b) => b.accuracy - a.accuracy); // Highest accuracy first
 
@@ -266,7 +271,11 @@ export default function Tests() {
                     <XAxis dataKey="subject" stroke="var(--text-muted)" fontSize={10} tickLine={false} axisLine={false} dy={10} />
                     <YAxis stroke="var(--text-muted)" fontSize={11} tickLine={false} axisLine={false} />
                     <Tooltip content={<CustomBarTooltip />} cursor={{ fill: 'var(--surface-hover)' }} />
-                    <Bar dataKey="accuracy" fill="var(--text-secondary)" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                    <Bar dataKey="accuracy" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                      {subjectChartData.map((entry) => (
+                        <Cell key={entry.subjectId} fill={entry.color} />
+                      ))}
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>

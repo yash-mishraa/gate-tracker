@@ -1,8 +1,10 @@
 import Dexie, { type Table } from 'dexie';
+import { getDeterministicSubjectColor } from './utils/subjectColors';
 
 export interface Subject {
   id?: number;
   name: string;
+  color?: string;
   startDate?: number;
   endDate?: number;
   lastUpdated?: number;
@@ -114,7 +116,7 @@ export class GateTrackerDB extends Dexie {
         'Digital Logic', 'COA', 'C', 'AI', 'DBMS&DW', 'OS', 'CN', 'DS', 'TOC', 'ML', 'ALGO', 'CD'
       ];
       defaultSubjects.forEach(name => {
-        tx.table('subjects').add({ name });
+        tx.table('subjects').add({ name, color: getDeterministicSubjectColor(name) });
       });
     });
   }

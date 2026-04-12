@@ -4,6 +4,8 @@ import { db, type Topic } from '../db';
 import { Card, Button, Input } from '../components/ui';
 import { Trash2, Plus, ChevronDown, ChevronUp, Calendar, CheckSquare } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
+import { SubjectTag } from '../components/SubjectTag';
+import { resolveSubjectColor } from '../utils/subjectColors';
 
 export default function Subjects() {
   const subjects = useLiveQuery(() => db.subjects.toArray(), []) || [];
@@ -113,7 +115,7 @@ export default function Subjects() {
             const subjectTopics = topics.filter(t => t.subjectId === subject.id);
             const completedCount = subjectTopics.filter(t => t.status === 'Completed').length;
             const progressPerc = subjectTopics.length > 0 ? (completedCount / subjectTopics.length) * 100 : 0;
-            
+            const subjectColor = resolveSubjectColor(subject);
             const isEditingDates = editingDatesId === subject.id;
             
             let timelineLabel = "No timeline set";
@@ -133,7 +135,7 @@ export default function Subjects() {
                     display: 'flex', 
                     justifyContent: 'space-between', 
                     alignItems: 'center',
-                    borderLeft: progressPerc === 100 ? '4px solid var(--color-green)' : '4px solid transparent',
+                    borderLeft: `4px solid ${subjectColor}`,
                     padding: '1.5rem'
                   }}
                   onClick={() => setExpandedId(isExpanded ? null : subject.id!)}
@@ -141,7 +143,7 @@ export default function Subjects() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '2rem' }}>
                     <div>
                       <h3 style={{ fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        {subject.name}
+                        <SubjectTag name={subject.name} color={subject.color} />
                       </h3>
                       <div className="text-secondary" style={{ fontSize: '0.875rem', marginTop: '0.25rem' }}>
                         {subjectTopics.length} Topics • {Math.round(progressPerc)}% Complete
@@ -179,7 +181,7 @@ export default function Subjects() {
                 </Card>
 
                 {isEditingDates && (
-                  <Card style={{ padding: '1rem', marginLeft: '1rem', backgroundColor: 'var(--surface-active)', border: '1px solid var(--border-color)', borderLeft: '4px solid var(--color-blue)' }}>
+                  <Card style={{ padding: '1rem', marginLeft: '1rem', backgroundColor: 'var(--surface-active)', border: '1px solid var(--border-color)', borderLeft: `4px solid ${subjectColor}` }}>
                     <h4 style={{ fontSize: '0.875rem', marginBottom: '0.75rem', fontWeight: 600 }}>Modify Active Timeline</h4>
                     <form 
                       onSubmit={(e) => {

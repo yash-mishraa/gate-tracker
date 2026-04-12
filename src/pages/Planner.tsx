@@ -3,6 +3,8 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type PlannerSlot } from '../db';
 import { Card, Button, Input, Select } from '../components/ui';
 import { Plus, CheckCircle, Circle, Trash2, Clock } from 'lucide-react';
+import { SubjectTag } from '../components/SubjectTag';
+import { resolveSubjectColor } from '../utils/subjectColors';
 
 export default function Planner() {
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
@@ -138,7 +140,7 @@ export default function Planner() {
               const height = endMin - startMin;
               const subject = subjects?.find(s => s.id === slot.subjectId);
               const linkedSession = sessions.find(s => s.id === slot.linkedSessionId);
-              
+              const subjectColor = resolveSubjectColor(subject);
               const leftPercent = (slot.col / slot.maxCol) * 100;
               const widthPercent = (1 / slot.maxCol) * 100;
 
@@ -159,7 +161,7 @@ export default function Planner() {
                     overflow: 'hidden',
                     zIndex: 10,
                     opacity: slot.completed ? 0.7 : 1,
-                    borderLeft: slot.completed ? '4px solid var(--success-color)' : '4px solid var(--accent-color)'
+                    borderLeft: `4px solid ${subjectColor}`
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -167,7 +169,9 @@ export default function Planner() {
                       <button onClick={(e) => toggleComplete(e, slot.id, slot.completed)} style={{ color: slot.completed ? 'var(--success-color)' : 'var(--text-secondary)' }}>
                         {slot.completed ? <CheckCircle size={18} /> : <Circle size={18} />}
                       </button>
-                      <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>{subject?.name}</span>
+                      <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>
+                        <SubjectTag name={subject?.name || 'Unknown'} color={subject?.color} />
+                      </span>
                     </div>
                     <Button variant="ghost" onClick={(e) => { e.stopPropagation(); handleDelete(slot.id); }} style={{ padding: '0.2rem', color: 'var(--danger-color)' }}>
                       <Trash2 size={14} />
