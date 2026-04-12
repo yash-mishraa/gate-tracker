@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type PyqTopic } from '../db';
 import { Card, Button, Input, ProgressBar } from '../components/ui';
-import { Plus, CheckCircle } from 'lucide-react';
+import { Plus, CheckCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { SubjectTag } from '../components/SubjectTag';
 import { getDeterministicSubjectColor, resolveSubjectColor } from '../utils/subjectColors';
 
@@ -14,6 +14,7 @@ export default function PYQTracker() {
   const [newSubjectName, setNewSubjectName] = useState('');
   const [bulkTopicInputs, setBulkTopicInputs] = useState<Record<number, string>>({});
   const [editingTopic, setEditingTopic] = useState<{ id: number, name: string, total: string, attempted?: string, correct?: string, revisions?: string } | null>(null);
+  const [expandedSubjectId, setExpandedSubjectId] = useState<number | null>(null);
 
   // --- Core Analytics Computations ---
   const totalAttempted = pyqTopics.reduce((a, t) => a + t.attemptedQuestions, 0);
@@ -63,7 +64,6 @@ export default function PYQTracker() {
     
     await db.transaction('rw', db.pyqTopics, async () => {
       for (const line of lines) {
-        // Simple heuristic: if line ends with a number, try to treat it as total. Otherwise default to 50.
         const match = line.match(/(.+?)\s+(\d+)$/);
         let name = line;
         let total = 50;
@@ -120,7 +120,6 @@ export default function PYQTracker() {
         break;
     }
 
-    // Safety final bound
     cor = Math.min(cor, att);
 
     await db.pyqTopics.update(topic.id!, {
@@ -211,124 +210,197 @@ export default function PYQTracker() {
           subjects.map(subject => {
             let sTopics = pyqTopics.filter(t => t.subjectId === subject.id);
 
-          // Stable Sorting: Primary(Strength), Secondary(Progress Asc)
-          const strengthRank = { 'Weak': 1, 'Average': 2, 'Strong': 3 };
-          sTopics.sort((a, b) => {
-            const rankA = strengthRank[deriveStrength(a)];
-            const rankB = strengthRank[deriveStrength(b)];
-            if (rankA !== rankB) return rankA - rankB;
-            return getTopicProgress(a) - getTopicProgress(b);
-          });
+            // Stable Sorting: Primary(Strength), Secondary(Progress Asc)
+            const strengthRank = { 'Weak': 1, 'Average': 2, 'Strong': 3 };
+            sTopics.sort((a, b) => {
+              const rankA = strengthRank[deriveStrength(a)];
+              const rankB = strengthRank[deriveStrength(b)];
+              if (rankA !== rankB) return rankA - rankB;
+              return getTopicProgress(a) - getTopicProgress(b);
+            });
 
-          const subjAttempted = sTopics.reduce((acc, t) => acc + t.attemptedQuestions, 0);
-          const subjTotal = sTopics.reduce((acc, t) => acc + t.totalQuestions, 0);
-          const subjProgress = subjTotal === 0 ? 0 : (subjAttempted / subjTotal) * 100;
-          const subjectColor = resolveSubjectColor(subject);
+            const subjAttempted = sTopics.reduce((acc, t) => acc + t.attemptedQuestions, 0);
+            const subjTotal = sTopics.reduce((acc, t) => acc + t.totalQuestions, 0);
+            const subjProgress = subjTotal === 0 ? 0 : (subjAttempted / subjTotal) * 100;
+            const subjectColor = resolveSubjectColor(subject);
+            const isExpanded = expandedSubjectId === subject.id;
 
-          return (
-            <Card
-              key={subject.id}
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '1.5rem',
-                padding: '1.5rem 2rem',
-                borderLeft: `4px solid ${subjectColor}`
-              }}
-            >
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '0.75rem' }}>
-                  <h2 style={{ fontSize: '1.5rem' }}>
-                    <SubjectTag name={subject.name} color={subject.color} />
-                  </h2>
-                  <span className="text-secondary" style={{ fontWeight: 600, fontSize: '0.875rem' }}>{Math.round(subjProgress)}% Matrix Complete</span>
+            return (
+              <Card
+                key={subject.id}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  padding: '1.5rem 2rem',
+                  borderLeft: `4px solid ${subjectColor}`
+                }}
+              >
+                {/* Subject Header */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+                  <div style={{ flex: 1 }}>
+                    <h2 style={{ fontSize: '1.5rem' }}>
+                      <SubjectTag name={subject.name} color={subject.color} />
+                    </h2>
+                    <span className="text-secondary" style={{ fontWeight: 600, fontSize: '0.875rem' }}>
+                      {Math.round(subjProgress)}% Matrix Complete
+                    </span>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    style={{ padding: '0.5rem' }}
+                    onClick={() => setExpandedSubjectId(isExpanded ? null : subject.id!)}
+                    aria-label={isExpanded ? `Collapse ${subject.name}` : `Expand ${subject.name}`}
+                  >
+                    {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                  </Button>
                 </div>
+
                 <ProgressBar progress={subjProgress} tone="green" />
-              </div>
 
-              {/* Bulk Input for Subtopics */}
-              <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
-                <textarea 
-                  className="ui-input" 
-                  rows={2} 
-                  placeholder="Bulk Add Subtopics (e.g., 'Binary Trees 50' or 'MST')"
-                  value={bulkTopicInputs[subject.id!] || ''}
-                  onChange={e => setBulkTopicInputs(prev => ({ ...prev, [subject.id!]: e.target.value }))}
-                  style={{ resize: 'vertical', width: '100%' }}
-                />
-                <Button onClick={() => handleBulkAddPyqTopics(subject.id!)} disabled={!bulkTopicInputs[subject.id!]?.trim()}>
-                  <Plus size={16}/> Build
-                </Button>
-              </div>
+                {/* Expandable Content */}
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateRows: isExpanded ? '1fr' : '0fr',
+                    opacity: isExpanded ? 1 : 0,
+                    transition: 'grid-template-rows 180ms ease, opacity 180ms ease',
+                    marginTop: isExpanded ? '1.5rem' : '0'
+                  }}
+                >
+                  <div style={{ overflow: 'hidden' }}>
 
-              {/* Subtopic List */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '1rem' }}>
-                {sTopics.map(topic => {
-                  const isCompleted = topic.attemptedQuestions === topic.totalQuestions;
-                  const accuracy = topic.attemptedQuestions === 0 ? 0 : Math.round((topic.correctQuestions / topic.attemptedQuestions) * 100);
-                  return (
-                    <Card key={topic.id} style={{ 
-                      padding: '1rem', 
-                      display: 'flex', 
-                      flexDirection: 'column', 
-                      gap: '0.75rem',
-                      opacity: isCompleted ? 0.6 : 1
-                    }}>
-                      {editingTopic?.id === topic.id ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                          <Input value={editingTopic?.name || ''} onChange={e => editingTopic && setEditingTopic({...editingTopic, name: e.target.value})} placeholder="Topic Name" />
-                          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '0.5rem' }}>
-                            <Input type="number" min="0" value={(editingTopic as any)?.attempted ?? ''} onChange={e => editingTopic && setEditingTopic({...editingTopic, attempted: e.target.value})} placeholder="Attempts" />
-                            <Input type="number" min="0" value={(editingTopic as any)?.correct ?? ''} onChange={e => editingTopic && setEditingTopic({...editingTopic, correct: e.target.value})} placeholder="Correct" />
-                            <Input type="number" min="0" value={(editingTopic as any)?.revisions ?? ''} onChange={e => editingTopic && setEditingTopic({...editingTopic, revisions: e.target.value})} placeholder="Revisions" />
-                            <Input type="number" min="1" value={editingTopic?.total || ''} onChange={e => editingTopic && setEditingTopic({...editingTopic, total: e.target.value})} placeholder="Total Qs" />
-                          </div>
-                          <div style={{ display: 'flex', gap: '0.5rem' }}>
-                            <Button onClick={saveEdits} style={{ flex: 1, padding: '0.2rem' }}>Save</Button>
-                            <Button variant="ghost" onClick={() => setEditingTopic(null)}>Cancel</Button>
-                          </div>
-                        </div>
-                      ) : (
-                        <>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                            <div style={{ fontWeight: 600, fontSize: '1rem' }}>
-                              {topic.name} 
-                              {isCompleted && <CheckCircle size={14} style={{ color: 'var(--success-color)', display: 'inline', marginLeft: '0.5rem', marginBottom: '-2px' }} />}
-                            </div>
-                            <Button variant="ghost" style={{ padding: '0 0.2rem', fontSize: '0.75rem' }} onClick={() => setEditingTopic({ id: topic.id!, name: topic.name, total: String(topic.totalQuestions), attempted: String(topic.attemptedQuestions), correct: String(topic.correctQuestions), revisions: String(topic.revisionCount || 0) } as any)}>
-                              Edit
-                            </Button>
-                          </div>
+                    {/* Bulk Input for Subtopics */}
+                    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
+                      <textarea 
+                        className="ui-input" 
+                        rows={2} 
+                        placeholder="Bulk Add Subtopics (e.g., 'Binary Trees 50' or 'MST')"
+                        value={bulkTopicInputs[subject.id!] || ''}
+                        onChange={e => setBulkTopicInputs(prev => ({ ...prev, [subject.id!]: e.target.value }))}
+                        style={{ resize: 'vertical', width: '100%' }}
+                      />
+                      <Button onClick={() => handleBulkAddPyqTopics(subject.id!)} disabled={!bulkTopicInputs[subject.id!]?.trim()}>
+                        <Plus size={16}/> Build
+                      </Button>
+                    </div>
 
-                          <div className="text-secondary" style={{ fontSize: '0.875rem', display: 'flex', justifyContent: 'space-between' }}>
-                            <span>Attempted: <span style={{ color: 'var(--text-primary)' }}>{topic.attemptedQuestions}</span> / {topic.totalQuestions}</span>
-                            <span>Accuracy: <span style={{ color: getAccuracyColor(accuracy) }}>{accuracy}%</span></span>
-                          </div>
+                    {/* Subtopic List */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '1rem', marginTop: '1rem' }}>
+                      {sTopics.map(topic => {
+                        const isCompleted = topic.attemptedQuestions === topic.totalQuestions;
+                        const accuracy = topic.attemptedQuestions === 0 ? 0 : Math.round((topic.correctQuestions / topic.attemptedQuestions) * 100);
 
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginTop: '0.5rem' }}>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                              <Button variant="secondary" onClick={() => updateStats(topic, 'att-inc')} disabled={isCompleted} style={{ padding: '0.2rem', fontSize: '0.75rem' }}>+1 Att</Button>
-                              <Button variant="ghost" onClick={() => updateStats(topic, 'att-dec')} style={{ padding: '0.2rem', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>-1</Button>
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                              <Button variant="secondary" onClick={() => updateStats(topic, 'cor-inc')} disabled={isCompleted} style={{ padding: '0.2rem', fontSize: '0.75rem' }}>+1 Cor</Button>
-                              <Button variant="ghost" onClick={() => updateStats(topic, 'cor-dec')} style={{ padding: '0.2rem', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>-1</Button>
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                              <Button variant="secondary" onClick={() => updateStats(topic, 'rev-inc')} style={{ padding: '0.2rem', fontSize: '0.75rem' }}>+1 Rev ({topic.revisionCount || 0})</Button>
-                              <Button variant="ghost" onClick={() => updateStats(topic, 'rev-dec')} style={{ padding: '0.2rem', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>-1</Button>
-                            </div>
-                          </div>
-                        </>
-                      )}
-                    </Card>
-                  );
-                })}
-              </div>
+                        return (
+                          <Card key={topic.id} style={{ 
+                            padding: '1rem', 
+                            display: 'flex', 
+                            flexDirection: 'column', 
+                            gap: '0.75rem',
+                            opacity: isCompleted ? 0.6 : 1
+                          }}>
+                            {editingTopic?.id === topic.id ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                <Input
+                                  value={editingTopic?.name || ''}
+                                  onChange={e => editingTopic && setEditingTopic({...editingTopic, name: e.target.value})}
+                                  placeholder="Topic Name"
+                                />
+                                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '0.5rem' }}>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    value={(editingTopic as any)?.attempted ?? ''}
+                                    onChange={e => editingTopic && setEditingTopic({...editingTopic, attempted: e.target.value})}
+                                    placeholder="Attempts"
+                                  />
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    value={(editingTopic as any)?.correct ?? ''}
+                                    onChange={e => editingTopic && setEditingTopic({...editingTopic, correct: e.target.value})}
+                                    placeholder="Correct"
+                                  />
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    value={(editingTopic as any)?.revisions ?? ''}
+                                    onChange={e => editingTopic && setEditingTopic({...editingTopic, revisions: e.target.value})}
+                                    placeholder="Revisions"
+                                  />
+                                  <Input
+                                    type="number"
+                                    min="1"
+                                    value={editingTopic?.total || ''}
+                                    onChange={e => editingTopic && setEditingTopic({...editingTopic, total: e.target.value})}
+                                    placeholder="Total Qs"
+                                  />
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                  <Button onClick={saveEdits} style={{ flex: 1, padding: '0.2rem' }}>Save</Button>
+                                  <Button variant="ghost" onClick={() => setEditingTopic(null)}>Cancel</Button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                  <div style={{ fontWeight: 600, fontSize: '1rem' }}>
+                                    {topic.name}
+                                    {isCompleted && (
+                                      <CheckCircle
+                                        size={14}
+                                        style={{ color: 'var(--success-color)', display: 'inline', marginLeft: '0.5rem', marginBottom: '-2px' }}
+                                      />
+                                    )}
+                                  </div>
+                                  <Button
+                                    variant="ghost"
+                                    style={{ padding: '0 0.2rem', fontSize: '0.75rem' }}
+                                    onClick={() => setEditingTopic({
+                                      id: topic.id!,
+                                      name: topic.name,
+                                      total: String(topic.totalQuestions),
+                                      attempted: String(topic.attemptedQuestions),
+                                      correct: String(topic.correctQuestions),
+                                      revisions: String(topic.revisionCount || 0)
+                                    } as any)}
+                                  >
+                                    Edit
+                                  </Button>
+                                </div>
 
-            </Card>
-          );
-        }))}
+                                <div className="text-secondary" style={{ fontSize: '0.875rem', display: 'flex', justifyContent: 'space-between' }}>
+                                  <span>Attempted: <span style={{ color: 'var(--text-primary)' }}>{topic.attemptedQuestions}</span> / {topic.totalQuestions}</span>
+                                  <span>Accuracy: <span style={{ color: getAccuracyColor(accuracy) }}>{accuracy}%</span></span>
+                                </div>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginTop: '0.5rem' }}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                    <Button variant="secondary" onClick={() => updateStats(topic, 'att-inc')} disabled={isCompleted} style={{ padding: '0.2rem', fontSize: '0.75rem' }}>+1 Att</Button>
+                                    <Button variant="ghost" onClick={() => updateStats(topic, 'att-dec')} style={{ padding: '0.2rem', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>-1</Button>
+                                  </div>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                    <Button variant="secondary" onClick={() => updateStats(topic, 'cor-inc')} disabled={isCompleted} style={{ padding: '0.2rem', fontSize: '0.75rem' }}>+1 Cor</Button>
+                                    <Button variant="ghost" onClick={() => updateStats(topic, 'cor-dec')} style={{ padding: '0.2rem', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>-1</Button>
+                                  </div>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                    <Button variant="secondary" onClick={() => updateStats(topic, 'rev-inc')} style={{ padding: '0.2rem', fontSize: '0.75rem' }}>+1 Rev ({topic.revisionCount || 0})</Button>
+                                    <Button variant="ghost" onClick={() => updateStats(topic, 'rev-dec')} style={{ padding: '0.2rem', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>-1</Button>
+                                  </div>
+                                </div>
+                              </>
+                            )}
+                          </Card>
+                        );
+                      })}
+                    </div> {/* end subtopic grid */}
+
+                  </div> {/* end overflow:hidden */}
+                </div> {/* end grid-template-rows */}
+
+              </Card>
+            );
+          })
+        )}
       </div>
 
     </div>

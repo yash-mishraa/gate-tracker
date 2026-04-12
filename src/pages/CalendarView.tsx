@@ -8,21 +8,12 @@ import {
 } from 'date-fns';
 import { Card, Button, Input, Select } from '../components/ui';
 import { ChevronLeft, ChevronRight, X, Clock, Trash2, Plus, Target, BookOpen } from 'lucide-react';
+import { resolveSubjectColor } from '../utils/subjectColors';
 
 export default function CalendarView() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [hoveredDate, setHoveredDate] = useState<Date | null>(null);
-
-  const getSubjectColor = (id: number) => {
-    const colors = [
-      'rgba(59, 130, 246, 0.7)',
-      'rgba(34, 197, 94, 0.7)',
-      'rgba(245, 158, 11, 0.7)',
-      'rgba(139, 92, 246, 0.7)'
-    ];
-    return colors[id % colors.length];
-  };
 
   // Live queries 
   const subjects = useLiveQuery(() => db.subjects.toArray(), []) || [];
@@ -199,15 +190,15 @@ export default function CalendarView() {
                                <div style={{ 
                                  height: isStartDay || isEndDay ? '3px' : '2px', 
                                  width: '100%', 
-                                 backgroundColor: getSubjectColor(ts.id!), 
-                                 opacity: isActiveHighlight ? 1 : 0.7,
+                                 backgroundColor: resolveSubjectColor(ts), 
+                                 opacity: isActiveHighlight ? 0.9 : 0.8,
                                  borderTopLeftRadius: bRadL,
                                  borderBottomLeftRadius: bRadL,
                                  borderTopRightRadius: bRadR,
                                  borderBottomRightRadius: bRadR,
                                }} />
                                {isActiveHighlight && (
-                                 <span style={{ fontSize: '0.55rem', color: getSubjectColor(ts.id!), opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', padding: '0 4px', lineHeight: 1 }}>
+                                  <span style={{ fontSize: '0.55rem', color: resolveSubjectColor(ts), opacity: 0.85, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', padding: '0 4px', lineHeight: 1 }}>
                                    {ts.name}
                                  </span>
                                )}
@@ -260,7 +251,7 @@ export default function CalendarView() {
                           
                           return (
                             <div key={ts.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem' }}>
-                              <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: getSubjectColor(ts.id!), opacity: 0.9 }} />
+                               <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: resolveSubjectColor(ts), opacity: 0.8 }} />
                               <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{ts.name}</span>
                               <span style={{ color: 'var(--text-muted)' }}>(Day {currentDay}/{totalDays})</span>
                             </div>
