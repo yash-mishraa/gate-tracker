@@ -13,32 +13,27 @@ export default function PYQTracker() {
   
   const [newSubjectName, setNewSubjectName] = useState('');
   const [bulkTopicInputs, setBulkTopicInputs] = useState<Record<number, string>>({});
-  const [editingTopic, setEditingTopic] = useState<{ id: number, name: string, total: string, attempted?: string, correct?: string, revisions?: string } | null>(null);
+  const [editingTopic, setEditingTopic] = useState<{ id: number, name: string, total: string, attempted?: string, revisions?: string } | null>(null);
   const [expandedSubjectId, setExpandedSubjectId] = useState<number | null>(null);
 
   // --- Core Analytics Computations ---
   const totalAttempted = pyqTopics.reduce((a, t) => a + t.attemptedQuestions, 0);
-  const totalCorrect = pyqTopics.reduce((a, t) => a + t.correctQuestions, 0);
+  const totalRevisionsDone = pyqTopics.reduce((a, t) => a + (t.revisionCount || 0), 0);
   const totalQuestionsPool = pyqTopics.reduce((a, t) => a + t.totalQuestions, 0);
-  const overallAccuracy = totalAttempted === 0 ? 0 : Math.round((totalCorrect / totalAttempted) * 100);
 
   const deriveStrength = (t: PyqTopic) => {
     const progress = t.attemptedQuestions / t.totalQuestions;
-    const accuracy = t.attemptedQuestions === 0 ? 0 : t.correctQuestions / t.attemptedQuestions;
+    const revisions = t.revisionCount || 0;
     
-    if (progress < 0.4 || accuracy < 0.6 || (t.totalQuestions > 10 && t.attemptedQuestions < 5)) return 'Weak';
-    if (progress > 0.8 && accuracy >= 0.8) return 'Strong';
+    if (progress < 0.4 || (t.attemptedQuestions > 0 && revisions === 0) || (t.totalQuestions > 10 && t.attemptedQuestions < 5)) return 'Weak';
+    if (progress > 0.8 && revisions >= 2) return 'Strong';
+
     return 'Average';
   };
 
   const getTopicProgress = (t: PyqTopic) => t.attemptedQuestions / t.totalQuestions;
 
   const weakTopicsCount = pyqTopics.filter(t => deriveStrength(t) === 'Weak').length;
-  const getAccuracyColor = (accuracy: number) => {
-    if (accuracy < 40) return 'var(--color-red)';
-    if (accuracy <= 70) return 'var(--color-amber)';
-    return 'var(--color-green)';
-  };
 
 
   // --- Handlers ---
@@ -92,41 +87,41 @@ export default function PYQTracker() {
     setBulkTopicInputs(prev => ({ ...prev, [subjectId]: '' }));
   };
 
-  const updateStats = async (topic: PyqTopic, mode: 'att-inc' | 'att-dec' | 'cor-inc' | 'cor-dec' | 'rev-inc' | 'rev-dec') => {
-    let att = topic.attemptedQuestions;
-    let cor = topic.correctQuestions;
-    let rev = topic.revisionCount || 0;
+  const updateStats = async (topicId: number, mode: 'att-inc' | 'att-dec' | 'rev-inc' | 'rev-dec') => {
+    await db.transaction('rw', db.pyqTopics, async () => {
+      const current = await db.pyqTopics.get(topicId);
+      if (!current) return;
 
-    switch (mode) {
-      case 'att-inc':
-        if (att < topic.totalQuestions) att++;
-        break;
-      case 'att-dec':
-        att = Math.max(0, att - 1);
-        cor = Math.min(cor, att);
-        break;
-      case 'cor-inc':
-        if (att < topic.totalQuestions) att++;
-        cor++;
-        break;
-      case 'cor-dec':
-        cor = Math.max(0, cor - 1);
-        break;
-      case 'rev-inc':
-        rev++;
-        break;
-      case 'rev-dec':
-        rev = Math.max(0, rev - 1);
-        break;
-    }
+      let att = current.attemptedQuestions;
+      let cor = current.correctQuestions;
+      let rev = current.revisionCount || 0;
 
-    cor = Math.min(cor, att);
+      switch (mode) {
+        case 'att-inc':
+          if (att < current.totalQuestions) att++;
+          break;
+        case 'att-dec':
+          att = Math.max(0, att - 1);
+          cor = Math.min(cor, att);
+          break;
+        case 'rev-inc':
+          rev++;
+          break;
+        case 'rev-dec':
+          rev = Math.max(0, rev - 1);
+          break;
+      }
 
-    await db.pyqTopics.update(topic.id!, {
-      attemptedQuestions: att,
-      correctQuestions: cor,
-      revisionCount: rev,
-      lastUpdated: Date.now()
+    // Retained for backward compatibility in stored records.
+      cor = Math.min(cor, att);
+
+    await db.pyqTopics.update(topicId, {
+        attemptedQuestions: att,
+        correctQuestions: cor,
+        revisionCount: rev,
+        lastUpdated: Date.now()
+      });
+
     });
   };
 
@@ -134,7 +129,6 @@ export default function PYQTracker() {
     if (!editingTopic) return;
     const parsedTotal = parseInt(editingTopic.total, 10);
     const parsedAtt = parseInt((editingTopic as any).attempted, 10) || 0;
-    const parsedCor = parseInt((editingTopic as any).correct, 10) || 0;
     const parsedRev = parseInt((editingTopic as any).revisions, 10) || 0;
 
     if (!parsedTotal || parsedTotal <= 0) {
@@ -142,16 +136,19 @@ export default function PYQTracker() {
       return;
     }
 
-    if (parsedCor > parsedAtt || parsedAtt > parsedTotal || parsedCor < 0 || parsedAtt < 0 || parsedRev < 0) {
+    if (parsedAtt > parsedTotal || parsedAtt < 0 || parsedRev < 0) {
       alert("Invalid matrix configuration variables.");
       return;
     }
+
+    const existing = await db.pyqTopics.get(editingTopic.id);
+    if (!existing) return;
 
     await db.pyqTopics.update(editingTopic.id, {
       name: editingTopic.name,
       totalQuestions: parsedTotal,
       attemptedQuestions: parsedAtt,
-      correctQuestions: parsedCor,
+      correctQuestions: Math.min(existing.correctQuestions, parsedAtt),
       revisionCount: parsedRev,
       lastUpdated: Date.now()
     });
@@ -174,9 +171,9 @@ export default function PYQTracker() {
             <div style={{ fontSize: '1.75rem', fontWeight: 600 }}>{totalAttempted} <span className="text-muted" style={{fontSize: '1rem'}}>/ {totalQuestionsPool}</span></div>
           </Card>
           <Card>
-            <div className="text-secondary" style={{ fontSize: '0.875rem', marginBottom: '0.5rem' }}>Global Accuracy</div>
-            <div style={{ fontSize: '1.75rem', fontWeight: 600, color: getAccuracyColor(overallAccuracy) }}>
-              {overallAccuracy}%
+           <div className="text-secondary" style={{ fontSize: '0.875rem', marginBottom: '0.5rem' }}>Total Revisions Done</div>
+            <div style={{ fontSize: '1.75rem', fontWeight: 600 }}>
+              {totalRevisionsDone}
             </div>
           </Card>
           <Card>
@@ -288,8 +285,7 @@ export default function PYQTracker() {
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '1rem', marginTop: '1rem' }}>
                       {sTopics.map(topic => {
                         const isCompleted = topic.attemptedQuestions === topic.totalQuestions;
-                        const accuracy = topic.attemptedQuestions === 0 ? 0 : Math.round((topic.correctQuestions / topic.attemptedQuestions) * 100);
-
+            
                         return (
                           <Card key={topic.id} style={{ 
                             padding: '1rem', 
@@ -312,13 +308,6 @@ export default function PYQTracker() {
                                     value={(editingTopic as any)?.attempted ?? ''}
                                     onChange={e => editingTopic && setEditingTopic({...editingTopic, attempted: e.target.value})}
                                     placeholder="Attempts"
-                                  />
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    value={(editingTopic as any)?.correct ?? ''}
-                                    onChange={e => editingTopic && setEditingTopic({...editingTopic, correct: e.target.value})}
-                                    placeholder="Correct"
                                   />
                                   <Input
                                     type="number"
@@ -360,7 +349,6 @@ export default function PYQTracker() {
                                       name: topic.name,
                                       total: String(topic.totalQuestions),
                                       attempted: String(topic.attemptedQuestions),
-                                      correct: String(topic.correctQuestions),
                                       revisions: String(topic.revisionCount || 0)
                                     } as any)}
                                   >
@@ -370,23 +358,20 @@ export default function PYQTracker() {
 
                                 <div className="text-secondary" style={{ fontSize: '0.875rem', display: 'flex', justifyContent: 'space-between' }}>
                                   <span>Attempted: <span style={{ color: 'var(--text-primary)' }}>{topic.attemptedQuestions}</span> / {topic.totalQuestions}</span>
-                                  <span>Accuracy: <span style={{ color: getAccuracyColor(accuracy) }}>{accuracy}%</span></span>
+                                  <span>Revisions: <span style={{ color: 'var(--text-primary)' }}>{topic.revisionCount || 0}</span></span>
                                 </div>
 
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginTop: '0.5rem' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.5rem' }}>
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                    <Button variant="secondary" onClick={() => updateStats(topic, 'att-inc')} disabled={isCompleted} style={{ padding: '0.2rem', fontSize: '0.75rem' }}>+1 Att</Button>
-                                    <Button variant="ghost" onClick={() => updateStats(topic, 'att-dec')} style={{ padding: '0.2rem', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>-1</Button>
+                                    <Button variant="secondary" onClick={() => updateStats(topic.id!, 'att-inc')} disabled={isCompleted} style={{ padding: '0.2rem', fontSize: '0.75rem' }}>+1 Att</Button>
+                                    <Button variant="ghost" onClick={() => updateStats(topic.id!, 'att-dec')} style={{ padding: '0.2rem', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>-1</Button>
+
                                   </div>
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                    <Button variant="secondary" onClick={() => updateStats(topic, 'cor-inc')} disabled={isCompleted} style={{ padding: '0.2rem', fontSize: '0.75rem' }}>+1 Cor</Button>
-                                    <Button variant="ghost" onClick={() => updateStats(topic, 'cor-dec')} style={{ padding: '0.2rem', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>-1</Button>
+                                    <Button variant="secondary" onClick={() => updateStats(topic.id!, 'rev-inc')} style={{ padding: '0.2rem', fontSize: '0.75rem' }}>+1 Rev ({topic.revisionCount || 0})</Button>
+                                    <Button variant="ghost" onClick={() => updateStats(topic.id!, 'rev-dec')} style={{ padding: '0.2rem', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>-1</Button>
                                   </div>
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                    <Button variant="secondary" onClick={() => updateStats(topic, 'rev-inc')} style={{ padding: '0.2rem', fontSize: '0.75rem' }}>+1 Rev ({topic.revisionCount || 0})</Button>
-                                    <Button variant="ghost" onClick={() => updateStats(topic, 'rev-dec')} style={{ padding: '0.2rem', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>-1</Button>
                                   </div>
-                                </div>
                               </>
                             )}
                           </Card>
@@ -402,7 +387,6 @@ export default function PYQTracker() {
           })
         )}
       </div>
-
     </div>
   );
 }
