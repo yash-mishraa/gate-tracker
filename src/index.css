@@ -18,9 +18,15 @@
   --accent-secondary: #E5E5E5;
   --accent-faint: rgba(255, 255, 255, 0.1);
 
-  --danger-color: #602525;
-  --success-color: #285C42;
-  --warning-color: #664917;
+  --color-blue: #3B82F6;
+  --color-green: #22C55E;
+  --color-amber: #F59E0B;
+  --color-red: #EF4444;
+
+  --danger-color: var(--color-red);
+  --success-color: var(--color-green);
+  --warning-color: var(--color-amber);
+
 
   --radius-sm: 4px;
   --radius-md: 8px;
@@ -107,7 +113,7 @@ textarea {
 }
 
 .ui-card.clickable:hover {
-  border-color: var(--text-secondary);
+  border-color: rgba(59, 130, 246, 0.55);
   cursor: pointer;
 }
 
@@ -129,12 +135,13 @@ textarea {
 }
 
 .ui-btn-primary {
-  background-color: var(--accent-color);
-  color: var(--bg-color);
+  background-color: rgba(59, 130, 246, 0.06);
+  color: var(--text-primary);
+  border-color: var(--color-blue);
 }
 
 .ui-btn-primary:hover {
-  opacity: 0.9;
+ border-color: #60A5FA;
 }
 
 .ui-btn-secondary {
@@ -183,9 +190,19 @@ textarea {
 
 .ui-progress-fill {
   height: 100%;
-  background-color: var(--text-primary);
+  background-color: rgba(59, 130, 246, 0.25);
   transition: width 0.3s ease;
 }
+
+.ui-progress-fill-green {
+  background-color: rgba(34, 197, 94, 0.25);
+}
+
+.ui-progress-fill-blue {
+  background-color: rgba(59, 130, 246, 0.25);
+}
+
+
 
 .text-muted {
   color: var(--text-muted);

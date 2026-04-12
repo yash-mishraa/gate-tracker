@@ -48,6 +48,8 @@ export default function Dashboard() {
       hours: Number(hours.toFixed(1))
     };
   });
+  const avgHours = chartData.length ? chartData.reduce((acc, day) => acc + day.hours, 0) / chartData.length : 0;
+  const chartDataWithBaseline = chartData.map(d => ({ ...d, baseline: Number(avgHours.toFixed(1)) }));
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
@@ -139,17 +141,17 @@ export default function Dashboard() {
 
       {/* Top Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
-        <Card style={{ borderColor: 'var(--success-color)' }}>
+        <Card>
           <div className="text-secondary" style={{ fontSize: '0.875rem', marginBottom: '0.5rem' }}>Longest Streak</div>
-          <div style={{ fontSize: '2rem', fontWeight: 600, color: 'var(--success-color)' }}>{maxStreak} <span style={{ fontSize: '1rem', color: 'var(--text-primary)' }}>Days</span></div>
+          <div style={{ fontSize: '2rem', fontWeight: 600, color: 'var(--color-green)' }}>{maxStreak} <span style={{ fontSize: '1rem', color: 'var(--text-primary)' }}>Days</span></div>
         </Card>
         <Card>
           <div className="text-secondary" style={{ fontSize: '0.875rem', marginBottom: '0.5rem' }}>Current Streak</div>
-          <div style={{ fontSize: '2rem', fontWeight: 600 }}>{currentStreak} <span style={{ fontSize: '1rem', color: 'var(--text-primary)' }}>Days</span></div>
+          <div style={{ fontSize: '2rem', fontWeight: 600, color: 'var(--color-blue)' }}>{currentStreak} <span style={{ fontSize: '1rem', color: 'var(--text-primary)' }}>Days</span></div>
         </Card>
         <Card>
           <div className="text-secondary" style={{ fontSize: '0.875rem', marginBottom: '0.5rem' }}>Total Mastered PYQs</div>
-          <div style={{ fontSize: '2rem', fontWeight: 600 }}>{pyqTopics.reduce((a, c) => a + c.correctQuestions, 0)}</div>
+          <div style={{ fontSize: '2rem', fontWeight: 600, color: 'var(--color-amber)' }}>{pyqTopics.reduce((a, c) => a + c.correctQuestions, 0)}</div>
         </Card>
       </div>
 
@@ -158,7 +160,7 @@ export default function Dashboard() {
         <h3 style={{ fontSize: '1rem', marginBottom: '1.5rem', fontWeight: 500 }}>Execution Trajectory (Past 14 Days)</h3>
         <div style={{ width: '100%', height: 250 }}>
           <ResponsiveContainer>
-            <LineChart data={chartData}>
+            <LineChart data={chartDataWithBaseline}>
               <XAxis dataKey="date" stroke="var(--text-muted)" fontSize={12} tickLine={false} axisLine={false} dy={10} />
               <YAxis stroke="var(--text-muted)" fontSize={12} tickLine={false} axisLine={false} />
               <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'var(--border-color)', strokeWidth: 1, strokeDasharray: '5 5' }} />
@@ -170,6 +172,15 @@ export default function Dashboard() {
                 dot={{ r: 3, fill: 'var(--bg-color)', strokeWidth: 2 }}
                 activeDot={{ r: 5, fill: 'var(--text-primary)' }}
               />
+              <Line
+                type="monotone"
+                dataKey="baseline"
+                stroke="rgba(59, 130, 246, 0.35)"
+                strokeWidth={2}
+                dot={false}
+                activeDot={false}
+              />
+
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -228,8 +239,8 @@ export default function Dashboard() {
                   <span style={{ fontWeight: 500 }}>{sub.name}</span>
                   <span className="text-secondary">{(totalMins / 60).toFixed(1)} hrs</span>
                 </div>
-                <div style={{ width: '100%', height: '4px', backgroundColor: 'var(--surface-hover)', borderRadius: '2px', overflow: 'hidden' }}>
-                  <div style={{ width: `${focusWidth}%`, height: '100%', backgroundColor: 'var(--text-secondary)' }} />
+                <div style={{ width: '100%', height: '6px', backgroundColor: 'var(--surface-hover)', borderRadius: '2px', overflow: 'hidden' }}>
+                  <div style={{ width: `${focusWidth}%`, height: '100%', backgroundColor: 'rgba(59, 130, 246, 0.25)' }} />
                 </div>
               </div>
             );

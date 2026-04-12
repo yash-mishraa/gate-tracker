@@ -129,10 +129,11 @@ export default function CalendarView() {
               
               // Status formatting
               const hours = totalMinutes / 60;
-              let dotLevel = 0;
-              if (hours > 0 && hours < 2) dotLevel = 1;
-              if (hours >= 2 && hours <= 5) dotLevel = 2;
-              if (hours > 5) dotLevel = 3;
+              let dotColor = '#52525B';
+              if (hours > 0 && hours < 2) dotColor = 'rgba(59, 130, 246, 0.25)';
+              if (hours >= 2 && hours <= 5) dotColor = 'rgba(59, 130, 246, 0.4)';
+              if (hours > 5) dotColor = 'var(--color-green)';
+
 
               return (
                 <div 
@@ -157,14 +158,13 @@ export default function CalendarView() {
                   </span>
 
                   {/* Dot Indicators */}
-                  <div style={{ display: 'flex', gap: '3px', marginTop: '4px', height: '4px' }}>
-                    {Array.from({ length: 3 }).map((_, i) => (
-                      <div key={i} style={{
-                        width: '4px', height: '4px', borderRadius: '50%',
-                        backgroundColor: i < dotLevel ? 'var(--success-color)' : 'transparent',
-                        opacity: 0.8
-                      }} />
-                    ))}
+                  <div style={{ display: 'flex', gap: '2px', marginTop: '4px', height: '3px' }}>
+                    <div style={{
+                      width: '3px',
+                      height: '3px',
+                      borderRadius: '50%',
+                      backgroundColor: dotColor
+                    }} />
                   </div>
                 </div>
               );

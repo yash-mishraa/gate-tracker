@@ -33,11 +33,11 @@ export function Select({ className, ...props }: React.SelectHTMLAttributes<HTMLS
   return <select className={cn("ui-input", className)} {...props} />;
 }
 
-export function ProgressBar({ progress, className }: { progress: number; className?: string }) {
+export function ProgressBar({ progress, className, tone = 'blue' }: { progress: number; className?: string; tone?: 'blue' | 'green' }) {
   const safeProgress = Math.min(100, Math.max(0, progress));
   return (
     <div className={cn("ui-progress-bar", className)}>
-      <div className="ui-progress-fill" style={{ width: `${safeProgress}%` }} />
+      <div className={cn("ui-progress-fill", tone === 'green' ? 'ui-progress-fill-green' : 'ui-progress-fill-blue')} style={{ width: `${safeProgress}%` }} />
     </div>
   );
 }

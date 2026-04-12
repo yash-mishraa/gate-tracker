@@ -30,6 +30,12 @@ export default function PYQTracker() {
   const getTopicProgress = (t: PyqTopic) => t.attemptedQuestions / t.totalQuestions;
 
   const weakTopicsCount = pyqTopics.filter(t => deriveStrength(t) === 'Weak').length;
+  const getAccuracyColor = (accuracy: number) => {
+    if (accuracy < 40) return 'var(--color-red)';
+    if (accuracy <= 70) return 'var(--color-amber)';
+    return 'var(--color-green)';
+  };
+
 
   // --- Handlers ---
   const handleAddSubject = async (e: React.FormEvent) => {
@@ -135,13 +141,13 @@ export default function PYQTracker() {
           </Card>
           <Card>
             <div className="text-secondary" style={{ fontSize: '0.875rem', marginBottom: '0.5rem' }}>Global Accuracy</div>
-            <div style={{ fontSize: '1.75rem', fontWeight: 600, color: overallAccuracy >= 60 ? 'var(--success-color)' : 'var(--warning-color)' }}>
+            <div style={{ fontSize: '1.75rem', fontWeight: 600, color: getAccuracyColor(overallAccuracy) }}>
               {overallAccuracy}%
             </div>
           </Card>
-          <Card style={{ borderColor: weakTopicsCount > 0 ? 'var(--danger-color)' : 'var(--border-color)' }}>
+          <Card>
             <div className="text-secondary" style={{ fontSize: '0.875rem', marginBottom: '0.5rem' }}>Weak Subtopics Detected</div>
-            <div style={{ fontSize: '1.75rem', fontWeight: 600, color: weakTopicsCount > 0 ? 'var(--danger-color)' : 'var(--text-primary)' }}>
+            <div style={{ fontSize: '1.75rem', fontWeight: 600, color: weakTopicsCount > 0 ? 'var(--color-red)' : 'var(--text-primary)' }}>
               {weakTopicsCount}
             </div>
           </Card>
@@ -187,7 +193,7 @@ export default function PYQTracker() {
                   <h2 style={{ fontSize: '1.5rem' }}>{subject.name}</h2>
                   <span className="text-secondary" style={{ fontWeight: 600, fontSize: '0.875rem' }}>{Math.round(subjProgress)}% Matrix Complete</span>
                 </div>
-                <ProgressBar progress={subjProgress} />
+                <ProgressBar progress={subjProgress} tone="green" />
               </div>
 
               {/* Bulk Input for Subtopics */}
@@ -208,18 +214,14 @@ export default function PYQTracker() {
               {/* Subtopic List */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '1rem' }}>
                 {sTopics.map(topic => {
-                  const strength = deriveStrength(topic);
                   const isCompleted = topic.attemptedQuestions === topic.totalQuestions;
                   const accuracy = topic.attemptedQuestions === 0 ? 0 : Math.round((topic.correctQuestions / topic.attemptedQuestions) * 100);
-                  const strengthColor = strength === 'Weak' ? 'var(--danger-color)' : strength === 'Average' ? 'var(--warning-color)' : 'var(--success-color)';
-
                   return (
                     <Card key={topic.id} style={{ 
                       padding: '1rem', 
                       display: 'flex', 
                       flexDirection: 'column', 
                       gap: '0.75rem',
-                      borderLeft: `4px solid ${isCompleted ? 'var(--success-color)' : strengthColor}`,
                       opacity: isCompleted ? 0.6 : 1
                     }}>
                       {editingTopic?.id === topic.id ? (
@@ -245,7 +247,7 @@ export default function PYQTracker() {
 
                           <div className="text-secondary" style={{ fontSize: '0.875rem', display: 'flex', justifyContent: 'space-between' }}>
                             <span>Attempted: <span style={{ color: 'var(--text-primary)' }}>{topic.attemptedQuestions}</span> / {topic.totalQuestions}</span>
-                            <span>Accuracy: <span style={{ color: 'var(--text-primary)' }}>{accuracy}%</span></span>
+                            <span>Accuracy: <span style={{ color: getAccuracyColor(accuracy) }}>{accuracy}%</span></span>
                           </div>
 
                           <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
