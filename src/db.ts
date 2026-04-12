@@ -3,6 +3,9 @@ import Dexie, { type Table } from 'dexie';
 export interface Subject {
   id?: number;
   name: string;
+  startDate?: number;
+  endDate?: number;
+  lastUpdated?: number;
 }
 
 export interface Topic {
@@ -22,6 +25,7 @@ export interface PyqTopic {
   totalQuestions: number;
   attemptedQuestions: number;
   correctQuestions: number;
+  revisionCount?: number;
   lastUpdated?: number;
 }
 

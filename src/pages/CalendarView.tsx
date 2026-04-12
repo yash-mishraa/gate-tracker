@@ -12,6 +12,17 @@ import { ChevronLeft, ChevronRight, X, Clock, Trash2, Plus, Target, BookOpen } f
 export default function CalendarView() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [hoveredDate, setHoveredDate] = useState<Date | null>(null);
+
+  const getSubjectColor = (id: number) => {
+    const colors = [
+      'rgba(59, 130, 246, 0.7)',
+      'rgba(34, 197, 94, 0.7)',
+      'rgba(245, 158, 11, 0.7)',
+      'rgba(139, 92, 246, 0.7)'
+    ];
+    return colors[id % colors.length];
+  };
 
   // Live queries 
   const subjects = useLiveQuery(() => db.subjects.toArray(), []) || [];
@@ -134,38 +145,129 @@ export default function CalendarView() {
               if (hours >= 2 && hours <= 5) dotColor = 'rgba(59, 130, 246, 0.4)';
               if (hours > 5) dotColor = 'var(--color-green)';
 
+              // Map Timeline Subjects
+              const activeTimelines = [...subjects].filter(s => {
+                if (!s.startDate || !s.endDate) return false;
+                const dTime = day.getTime();
+                return dTime >= startOfDay(new Date(s.startDate)).getTime() && dTime <= endOfDay(new Date(s.endDate)).getTime();
+              }).sort((a, b) => a.startDate! - b.startDate! || a.id! - b.id!);
+
+              const isSunday = day.getDay() === 0;
+              const isSaturday = day.getDay() === 6;
+
+              const isHovered = hoveredDate && isSameDay(hoveredDate, day);
+              const isActiveHighlight = isSelected || isToday;
 
               return (
                 <div 
                   key={day.toString()} 
                   onClick={() => setSelectedDate(day)}
+                  onMouseEnter={() => setHoveredDate(day)}
+                  onMouseLeave={() => setHoveredDate(null)}
                   style={{
                     aspectRatio: '1',
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: 'center',
-                    justifyContent: 'center',
+                    justifyContent: 'flex-start',
                     borderRadius: 'var(--radius-md)',
+                    position: 'relative',
                     cursor: 'pointer',
                     backgroundColor: isSelected ? 'var(--surface-active)' : 'transparent',
                     border: isToday ? '1px solid var(--accent-faint)' : '1px solid transparent',
                     opacity: isCurrentMonth ? 1 : 0.3,
-                    transition: 'all var(--transition-fast)'
+                    transition: 'all var(--transition-fast)',
+                    paddingTop: '0.25rem'
                   }}
                 >
-                  <span style={{ fontSize: '1rem', fontWeight: isToday ? 600 : 400 }}>
+                  {/* Timeline Renderings */}
+                  {activeTimelines.length > 0 && (
+                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', width: '100%', marginBottom: 'auto' }}>
+                        {activeTimelines.slice(0, 2).map(ts => {
+                           const startD = new Date(ts.startDate!);
+                           const endD = new Date(ts.endDate!);
+                           const isStartDay = isSameDay(day, startD);
+                           const isEndDay = isSameDay(day, endD);
+                           
+                           const ml = isStartDay ? '4px' : (isSunday ? '0' : '-0.5rem');
+                           const mr = isEndDay ? '4px' : (isSaturday ? '0' : '-0.5rem');
+                           const bRadL = isStartDay ? '2px' : '0';
+                           const bRadR = isEndDay ? '2px' : '0';
+
+                           return (
+                             <div key={ts.id} style={{ display: 'flex', flexDirection: 'column', marginLeft: ml, marginRight: mr }}>
+                               <div style={{ 
+                                 height: isStartDay || isEndDay ? '3px' : '2px', 
+                                 width: '100%', 
+                                 backgroundColor: getSubjectColor(ts.id!), 
+                                 opacity: isActiveHighlight ? 1 : 0.7,
+                                 borderTopLeftRadius: bRadL,
+                                 borderBottomLeftRadius: bRadL,
+                                 borderTopRightRadius: bRadR,
+                                 borderBottomRightRadius: bRadR,
+                               }} />
+                               {isActiveHighlight && (
+                                 <span style={{ fontSize: '0.55rem', color: getSubjectColor(ts.id!), opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', padding: '0 4px', lineHeight: 1 }}>
+                                   {ts.name}
+                                 </span>
+                               )}
+                             </div>
+                           );
+                        })}
+                        {activeTimelines.length > 2 && (
+                           <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textAlign: 'center', marginTop: '-2px' }}>+{activeTimelines.length - 2}</div>
+                        )}
+                     </div>
+                  )}
+
+                  <span style={{ fontSize: '1rem', fontWeight: isToday ? 600 : 400, marginTop: activeTimelines.length === 0 ? 'auto' : 0 }}>
                     {format(day, 'd')}
                   </span>
 
                   {/* Dot Indicators */}
-                  <div style={{ display: 'flex', gap: '2px', marginTop: '4px', height: '3px' }}>
-                    <div style={{
-                      width: '3px',
-                      height: '3px',
-                      borderRadius: '50%',
-                      backgroundColor: dotColor
-                    }} />
+                  <div style={{ display: 'flex', gap: '2px', marginTop: '2px', marginBottom: 'auto', height: '3px' }}>
+                    <div style={{ width: '4px', height: '4px', borderRadius: '50%', backgroundColor: dotColor }} />
                   </div>
+
+                  {/* Hover Tooltip */}
+                  {isHovered && activeTimelines.length > 0 && (
+                     <div style={{
+                       position: 'absolute',
+                       bottom: '100%',
+                       left: '50%',
+                       transform: 'translateX(-50%)',
+                       backgroundColor: '#141414',
+                       border: '1px solid var(--border-color)',
+                       padding: '0.75rem',
+                       borderRadius: '6px',
+                       boxShadow: 'var(--shadow-md)',
+                       zIndex: 50,
+                       minWidth: 'max-content',
+                       display: 'flex',
+                       flexDirection: 'column',
+                       gap: '0.5rem',
+                       pointerEvents: 'none',
+                       marginBottom: '0.5rem'
+                     }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem', fontWeight: 600 }}>
+                          {format(day, 'MMM d')}
+                        </div>
+                        {activeTimelines.map(ts => {
+                          const totalMs = endOfDay(new Date(ts.endDate!)).getTime() - startOfDay(new Date(ts.startDate!)).getTime();
+                          const totalDays = Math.round(totalMs / (1000 * 60 * 60 * 24));
+                          const currentMs = day.getTime() - startOfDay(new Date(ts.startDate!)).getTime();
+                          const currentDay = Math.floor(currentMs / (1000 * 60 * 60 * 24)) + 1;
+                          
+                          return (
+                            <div key={ts.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem' }}>
+                              <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: getSubjectColor(ts.id!), opacity: 0.9 }} />
+                              <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{ts.name}</span>
+                              <span style={{ color: 'var(--text-muted)' }}>(Day {currentDay}/{totalDays})</span>
+                            </div>
+                          );
+                        })}
+                     </div>
+                  )}
                 </div>
               );
             })}
