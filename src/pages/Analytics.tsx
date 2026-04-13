@@ -67,14 +67,17 @@ export default function Analytics() {
     .map(subject => ({
       id: subject.id,
       subject: subject.name,
-      hours: Number((subject.minutes / 60).toFixed(1)),
+      minutes: subject.minutes,
+      hours: subject.minutes / 60,
       share: totalMinutes > 0 ? ((subject.minutes / totalMinutes) * 100).toFixed(1) : '0.0',
       color: subject.color || 'var(--accent-color)'
     }))
-    .sort((a, b) => b.hours - a.hours);
+    .sort((a, b) => b.minutes - a.minutes);
 
   const timeTrendData = getPastNDaysTimeSeries(completedMinutesByDay, 30, now);
   const hasTrendData = timeTrendData.some(day => day.minutes > 0);
+  const maxTrendHours = Math.max(1, Math.ceil(Math.max(...timeTrendData.map(day => day.hours), 0)));
+  const maxSubjectHours = Math.max(1, Math.ceil(Math.max(...subjectHoursData.map(item => item.hours), 0)));
 
   const tenDaysMs = 10 * 86400000;
   const ignoredSubject = subjectMinutes
@@ -226,11 +229,11 @@ export default function Analytics() {
                 </defs>
                 <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
                 <XAxis dataKey="date" stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} />
-                <YAxis stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} />
+                <YAxis stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} domain={[0, maxTrendHours]} tickCount={maxTrendHours + 1} allowDecimals={false} tickFormatter={(value) => `${value}`} />
                 <Tooltip
                   cursor={{ stroke: 'rgba(255,255,255,0.25)', strokeWidth: 1, strokeDasharray: '4 4' }}
                   contentStyle={{ background: '#111', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, color: '#fff', fontSize: 13, padding: '0.75rem' }}
-                  formatter={(value: any) => formatMinutesHuman(Math.round(Number(value ?? 0) * 60))}
+                  formatter={(_value: any, _name: any, entry: any) => formatMinutesHuman(Number(entry?.payload?.minutes ?? 0))}
                 />
                 <Area type="monotone" dataKey="hours" fill="url(#analyticsTrendFill)" stroke="none" />
                 <Line type="monotone" dataKey="hours" stroke="rgba(255,255,255,0.95)" strokeWidth={2.5} dot={false} activeDot={{ r: 6, fill: '#fff', stroke: 'rgba(255,255,255,0.25)', strokeWidth: 8 }} />
@@ -250,9 +253,9 @@ export default function Analytics() {
               <ResponsiveContainer>
                 <BarChart data={subjectHoursData} layout="vertical" margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
                   <CartesianGrid stroke="rgba(255,255,255,0.08)" horizontal={false} />
-                  <XAxis type="number" stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} />
+                  <XAxis type="number" stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} domain={[0, maxSubjectHours]} tickCount={maxSubjectHours + 1} allowDecimals={false} tickFormatter={(value) => `${value}`} />
                   <YAxis dataKey="subject" type="category" width={140} stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} />
-                  <Tooltip cursor={{ fill: 'var(--surface-hover)' }} contentStyle={{ background: '#111', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, color: '#fff', fontSize: 13 }} formatter={(value: any) => formatMinutesHuman(Math.round(Number(value ?? 0) * 60))} />
+                  <Tooltip cursor={{ fill: 'var(--surface-hover)' }} contentStyle={{ background: '#111', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, color: '#fff', fontSize: 13 }} formatter={(_value: any, _name: any, entry: any) => formatMinutesHuman(Number(entry?.payload?.minutes ?? 0))} />
                   <Bar dataKey="hours" maxBarSize={26} radius={[0, 4, 4, 0]}>
                     {subjectHoursData.map(item => (
                       <Cell key={item.id} fill={item.color} />
@@ -264,7 +267,7 @@ export default function Analytics() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.8rem' }}>
               {subjectHoursData.map(item => (
                 <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem' }}>
-                  <span>{item.subject} — {formatMinutesHuman(Math.round(item.hours * 60))}</span>
+                  <span>{item.subject} — {formatMinutesHuman(item.minutes)}</span>
                   <span className="text-muted">{item.share}%</span>
                 </div>
               ))}

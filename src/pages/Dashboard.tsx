@@ -11,18 +11,18 @@ const GATE_TIMELINE_START = new Date('2026-02-07T00:00:00');
 
 interface TooltipProps {
   active?: boolean;
-  payload?: Array<{ value?: number }>;
+  payload?: Array<{ value?: number; payload?: { minutes?: number } }>;
   label?: string;
 }
 
 const CustomTooltip = ({ active, payload, label }: TooltipProps) => {
   if (active && payload && payload.length) {
-    const value = Number(payload[0]?.value ?? 0);
+    const minutes = Number(payload[0]?.payload?.minutes ?? 0);
     return (
       <div style={{ backgroundColor: '#111', border: '1px solid rgba(255,255,255,0.15)', padding: '0.75rem 0.9rem', borderRadius: '10px', color: '#fff', fontSize: '13px' }}>
         <p style={{ margin: 0, fontWeight: 600, marginBottom: '0.25rem', color: 'rgba(255,255,255,0.9)' }}>{label}</p>
         <p style={{ margin: 0, color: 'rgba(255,255,255,0.95)', fontWeight: 700 }}>
-          Focused: {formatMinutesHuman(Math.round(value * 60))}
+          Focused: {formatMinutesHuman(minutes)}
         </p>
       </div>
     );
@@ -32,9 +32,9 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps) => {
 
 // ✅ Cast to any to escape Recharts' overly strict Formatter generic
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const barFormatter = (value: any): [string, string] => {
-  const num = parseFloat(String(value));
-  return [formatMinutesHuman(Math.round((isNaN(num) ? 0 : num) * 60)), 'Focused'];
+const barFormatter = (_value: any, _name: any, entry: any): [string, string] => {
+  const minutes = Number(entry?.payload?.minutes ?? 0);
+  return [formatMinutesHuman(minutes), 'Focused'];
 };
 
 export default function Dashboard() {
@@ -74,6 +74,7 @@ export default function Dashboard() {
   const hasTrajectoryData = chartData.some(day => day.minutes > 0);
   const avgHours = chartData.length ? chartData.reduce((acc, day) => acc + day.hours, 0) / chartData.length : 0;
   const chartDataWithBaseline = chartData.map(d => ({ ...d, baseline: Number(avgHours.toFixed(2)) }));
+  const maxTrendHours = Math.max(1, Math.ceil(Math.max(...chartData.map(day => day.hours), 0)));
 
   const subjectHoursData = subjects
     .map(sub => {
@@ -81,12 +82,14 @@ export default function Dashboard() {
       return {
         id: sub.id,
         subject: sub.name,
-        hours: Number((minutes / 60).toFixed(1)),
+        minutes,
+        hours: minutes / 60,
         color: resolveSubjectColor(sub)
       };
     })
     .filter(item => item.hours > 0)
     .sort((a, b) => b.hours - a.hours);
+    const maxSubjectHours = Math.max(1, Math.ceil(Math.max(...subjectHoursData.map(item => item.hours), 0)));
 
   const daysLeft = (() => {
     const diffTime = GATE_TARGET_DATE.getTime() - today.getTime();
@@ -167,7 +170,7 @@ export default function Dashboard() {
                 </defs>
                 <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
                 <XAxis dataKey="date" stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} dy={10} />
-                <YAxis stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} />
+                <YAxis stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} domain={[0, maxTrendHours]} tickCount={maxTrendHours + 1} allowDecimals={false} tickFormatter={(value) => `${value}`} />
                 <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(255,255,255,0.25)', strokeWidth: 1, strokeDasharray: '4 4' }} />
                 <Area type="monotone" dataKey="hours" fill="url(#dashboardTrendFill)" stroke="none" />
                 <Line
@@ -273,7 +276,7 @@ export default function Dashboard() {
             <ResponsiveContainer>
               <BarChart data={subjectHoursData} layout="vertical" margin={{ top: 0, right: 10, left: 10, bottom: 0 }}>
                 <CartesianGrid stroke="rgba(255,255,255,0.08)" horizontal={false} />
-                <XAxis type="number" stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} />
+                <XAxis type="number" stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} domain={[0, maxSubjectHours]} tickCount={maxSubjectHours + 1} allowDecimals={false} tickFormatter={(value) => `${value}`} />
                 <YAxis dataKey="subject" type="category" width={120} stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} />
                 <Tooltip
                   cursor={{ fill: 'var(--surface-hover)' }}

@@ -64,7 +64,7 @@ export const getPastNDaysTimeSeries = (
       date: format(day, 'MMM dd'),
       dayKey: key,
       minutes: dayMinutes,
-      hours: Number((dayMinutes / 60).toFixed(2))
+      hours: dayMinutes / 60
     };
   });
 };
