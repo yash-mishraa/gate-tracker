@@ -1,222 +1,225 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type PyqTopic, type Subject } from '../db';
 import { Card } from '../components/ui';
-import { AlertTriangle, Clock, Target, Ghost } from 'lucide-react';
-import { differenceInDays } from 'date-fns';
+import { AlertTriangle, Clock, Target, Ghost, TrendingUp, Gauge, CalendarCheck, PieChart } from 'lucide-react';
+import { isSameDay, startOfWeek, subDays, format } from 'date-fns';
+
+const minutesToLabel = (minutes: number) => {
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+};
 
 export default function Analytics() {
   const subjects: Subject[] = useLiveQuery(() => db.subjects.toArray()) ?? [];
   const pyqTopics: PyqTopic[] = useLiveQuery(() => db.pyqTopics.toArray()) ?? [];
   const studySessions = useLiveQuery(() => db.studySessions.toArray()) ?? [];
-  const testSubjects = useLiveQuery(() => db.testSubjects.toArray()) ?? [];
-  const tests = useLiveQuery(() => db.tests.toArray()) ?? [];
+const plannerSlots = useLiveQuery(() => db.plannerSlots.toArray()) ?? [];
 
-  const deriveStrength = (t: PyqTopic) => {
-    const progress = t.attemptedQuestions / t.totalQuestions;
-    const accuracy = t.attemptedQuestions === 0 ? 0 : t.correctQuestions / t.attemptedQuestions;
-    if (progress < 0.4 || accuracy < 0.6 || (t.totalQuestions > 10 && t.attemptedQuestions < 5)) return 'Weak';
-    if (progress > 0.8 && accuracy >= 0.8) return 'Strong';
-    return 'Average';
-  };
+  const now = new Date();
+  const nowMs = now.getTime();
+  const weekStart = startOfWeek(now, { weekStartsOn: 1 });
 
-  const getStatusColor = (status: string) => {
-    switch(status) {
-      case 'Strong': return 'var(--success-color)';
-      case 'Average': return 'var(--warning-color)';
-      case 'Weak': return 'var(--danger-color)';
-      default: return 'var(--text-muted)';
-    }
-  };
+  const sessions = [...studySessions].sort((a, b) => a.startTime - b.startTime);
+  const sessionCount = sessions.length;
+  const confidenceLow = sessionCount < 5;
 
-  // --- Confidence Check ---
-  const hasEnoughData = studySessions.length >= 5;
+  const todayMinutes = sessions
+    .filter(s => isSameDay(new Date(s.startTime), now))
+    .reduce((sum, s) => sum + s.durationMinutes, 0);
+  const weekMinutes = sessions
+    .filter(s => s.startTime >= weekStart.getTime())
+    .reduce((sum, s) => sum + s.durationMinutes, 0);
+  const totalMinutes = sessions.reduce((sum, s) => sum + s.durationMinutes, 0);
 
-  if (!hasEnoughData) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', height: '100%' }}>
-        <div>
-          <h1 style={{ fontSize: '1.875rem', marginBottom: '0.5rem' }}>Deep Analytics</h1>
-          <p className="text-secondary">AI-driven extraction of your behavioral patterns.</p>
-        </div>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>
-          <AlertTriangle size={32} style={{ marginBottom: '1rem', opacity: 0.5 }} />
-          <h3 style={{ fontSize: '1.25rem', marginBottom: '0.5rem', color: 'var(--text-primary)' }}>Not enough data yet</h3>
-          <p>The analytics engine requires a minimum baseline of 5 completed study sessions to guarantee accurate heuristics.</p>
-          <div style={{ marginTop: '1rem', padding: '0.5rem 1rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', fontSize: '0.875rem' }}>
-            Current Sessions Verified: {studySessions.length} / 5
-          </div>
-        </div>
-      </div>
-    );
+  const hourBuckets = Array(24).fill(0);
+sessions.forEach(session => {
+    hourBuckets[new Date(session.startTime).getHours()] += session.durationMinutes;
+  });
+  const maxBucketMinutes = Math.max(...hourBuckets, 0);
+  const peakHour = hourBuckets.indexOf(maxBucketMinutes);
+  const peakFocus = maxBucketMinutes > 0
+    ? `${format(new Date(0, 0, 0, peakHour), 'h a')}–${format(new Date(0, 0, 0, (peakHour + 2) % 24), 'h a')}`
+    : 'Not enough timing data';
+
+  const subjectMinutes = subjects.map(subject => {
+    const mins = sessions
+      .filter(s => s.subjectId === subject.id)
+      .reduce((sum, s) => sum + s.durationMinutes, 0);
+    return { ...subject, minutes: mins };
+
+  });
+
+  const tenDaysMs = 10 * 86400000;
+const ignoredSubject = subjectMinutes
+    .map(subject => {
+      const lastSessionTime = sessions
+        .filter(s => s.subjectId === subject.id)
+        .reduce((max, s) => Math.max(max, s.endTime), 0);
+      return { ...subject, lastSessionTime };
+    })
+    .filter(subject => subject.lastSessionTime > 0 && (nowMs - subject.lastSessionTime) > tenDaysMs)
+    .sort((a, b) => a.lastSessionTime - b.lastSessionTime)[0];
+
+  const firstDay = sessions[0] ? new Date(sessions[0].startTime) : now;
+  const daysTracked = Math.max(1, Math.ceil((nowMs - firstDay.getTime()) / 86400000) + 1);
+  const activeDays = new Set(sessions.map(s => new Date(s.startTime).toDateString())).size;
+  const consistencyScore = Math.round((activeDays / daysTracked) * 100);
+
+  const avgSessionMinutes = sessionCount ? Math.round(totalMinutes / sessionCount) : 0;
+  const last14Days = Array.from({ length: 14 }).map((_, idx) => subDays(now, 13 - idx));
+  const sessionsPerDay = last14Days.map(day => sessions.filter(s => isSameDay(new Date(s.startTime), day)).length);
+  const avgSessionsPerDay = sessionsPerDay.length
+    ? Number((sessionsPerDay.reduce((sum, n) => sum + n, 0) / sessionsPerDay.length).toFixed(1))
+    : 0;
+
+  const eveningSessions = sessions.filter(s => new Date(s.startTime).getHours() >= 18).length;
+  const shortSessions = sessions.filter(s => s.durationMinutes < 30).length;
+  const focusWarnings: string[] = [];
+  if (sessionCount > 0 && eveningSessions / sessionCount < 0.15) {
+    focusWarnings.push('You avoid studying after 6 PM.');
+  }
+  if (sessionCount > 0 && shortSessions / sessionCount > 0.6) {
+    focusWarnings.push('Most sessions are under 30 minutes.');
+  }
+  if (focusWarnings.length === 0) {
+    focusWarnings.push('Your session distribution looks balanced right now.');
   }
 
-  // --- Productivity Insights ---
-  
-  // 1. Best Study Time (Map hours 0-23 grouping total durationMinutes)
-  const hourBuckets = Array(24).fill(0);
-  studySessions.forEach(session => {
-    const hour = new Date(session.startTime).getHours();
-    hourBuckets[hour] += session.durationMinutes;
-  });
-  const maxMins = Math.max(...hourBuckets);
-  const bestHour = hourBuckets.indexOf(maxMins);
-  const bestHourString = bestHour !== -1 && maxMins > 0 
-    ? `${bestHour.toString().padStart(2, '0')}:00 - ${(bestHour + 1).toString().padStart(2, '0')}:00` 
-    : 'Unknown';
+  const completedSlots = plannerSlots.filter(slot => slot.completed);
+  const efficiencyRatios = completedSlots
+    .map(slot => {
+      const plannedMinutes = Math.max(1, Math.round((new Date(`${slot.date}T${slot.endTime}:00`).getTime() - new Date(`${slot.date}T${slot.startTime}:00`).getTime()) / 60000));
+      const linked = slot.linkedSessionId ? sessions.find(s => s.id === slot.linkedSessionId) : undefined;
+      if (!linked) return null;
+      return linked.durationMinutes / plannedMinutes;
+    })
+    .filter((v): v is number => v !== null);
+  const efficiency = efficiencyRatios.length
+    ? Math.round((efficiencyRatios.reduce((sum, n) => sum + n, 0) / efficiencyRatios.length) * 100)
+    : null;
 
-  // 2. Most Ignored Topic
-  const tenDaysMs = 10 * 86400000;
-  const now = Date.now();
-  const ignoredTopic: PyqTopic | undefined = pyqTopics
-    .filter(t => t.lastUpdated && (now - t.lastUpdated > tenDaysMs) && (t.attemptedQuestions < t.totalQuestions))
-    .sort((a, b) => (a.lastUpdated || 0) - (b.lastUpdated || 0))[0];
+  const pyqAttempts = pyqTopics.reduce((sum, topic) => sum + topic.attemptedQuestions, 0);
 
-  // 3. Weakest Subject (Blended Vulnerability logic)
-  let weakestSubject: Subject | null = null;
-  let highestBlendedWeakness = -1;
-  let weakestScoreComponents = { base: 0, mock: 0 };
-
-  subjects.forEach(subject => {
-    // A) Base Topic Weakness
-    const sTopics = pyqTopics.filter(t => t.subjectId === subject.id);
-    let baseTopicWeakness = 0;
-    if (sTopics.length > 0) {
-      const weakCount = sTopics.filter(t => deriveStrength(t) === 'Weak').length;
-      baseTopicWeakness = weakCount / sTopics.length;
-    }
-
-    // B) Recency-Weighted Mock Performance
-    const subjectTestRecords = testSubjects.filter(ts => ts.subjectId === subject.id);
-    let totalWeight = 0;
-    let weightedTestWeakness = 0;
-
-    if (subjectTestRecords.length > 0) {
-      subjectTestRecords.forEach(ts => {
-        const parentTest = tests.find(t => t.id === ts.testId);
-        if (parentTest) {
-          const daysSince = Math.max(0, differenceInDays(new Date(), new Date(parentTest.date)));
-          // Using an algorithmic exponential decay bounding half-life mapping realistically
-          const recencyWeight = Math.max(0.1, Math.exp(-daysSince / 30)); 
-          const accuracy = ts.marksObtained / ts.totalMarks;
-          const weaknessMetrics = 1 - accuracy; // Flipped. Lower accuracy = higher weakness metric
-
-          totalWeight += recencyWeight;
-          weightedTestWeakness += weaknessMetrics * recencyWeight;
-        }
-      });
-      weightedTestWeakness = totalWeight > 0 ? (weightedTestWeakness / totalWeight) : 0;
-    }
-
-    // Blend Logic: If mocks exist, they override baseline heavily (60/40 Split)
-    const blendedWeakness = subjectTestRecords.length > 0 ? (0.4 * baseTopicWeakness) + (0.6 * weightedTestWeakness) : baseTopicWeakness;
-
-    if (blendedWeakness > highestBlendedWeakness && (baseTopicWeakness > 0 || subjectTestRecords.length > 0)) {
-      highestBlendedWeakness = blendedWeakness;
-      weakestSubject = subject;
-      weakestScoreComponents = { base: baseTopicWeakness, mock: weightedTestWeakness };
-    }
-  });
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
       <div>
         <h1 style={{ fontSize: '1.875rem', marginBottom: '0.5rem' }}>Deep Analytics</h1>
         <p className="text-secondary">AI-driven extraction of your behavioral patterns.</p>
+        {confidenceLow && (
+          <div style={{ marginTop: '0.75rem', display: 'inline-flex', gap: '0.4rem', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: '999px', padding: '0.2rem 0.7rem', fontSize: '0.8rem' }}>
+            <AlertTriangle size={14} />
+            Low Confidence ({sessionCount}/5 sessions)
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.5rem' }}>
         
-        {/* Best Study Time */}
         <Card style={{ borderTop: '4px solid var(--accent-color)' }}>
-          <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
-            <div style={{ padding: '0.75rem', backgroundColor: 'var(--surface-hover)', borderRadius: 'var(--radius-md)' }}>
-              <Clock className="text-secondary" />
-            </div>
+                    <div style={{ display: 'flex', gap: '1rem' }}>
+            <Clock className="text-secondary" />
             <div>
-              <div className="text-secondary" style={{ fontSize: '0.875rem', marginBottom: '0.25rem' }}>Apex Focus Phase</div>
-              <div style={{ fontSize: '1.25rem', fontWeight: 600 }}>{bestHourString}</div>
-              <div className="text-muted" style={{ fontSize: '0.75rem', marginTop: '0.5rem' }}>Based on {Math.round(maxMins / 60)} dense hours logged.</div>
+              <div className="text-secondary" style={{ fontSize: '0.875rem' }}>Total Study Time</div>
+              <div style={{ fontWeight: 600 }}>Today: {minutesToLabel(todayMinutes)}</div>
+              <div style={{ fontWeight: 600 }}>This week: {minutesToLabel(weekMinutes)}</div>
+              <div style={{ fontWeight: 600 }}>Overall: {minutesToLabel(totalMinutes)}</div>
+              </div>
+            </div>
+            </Card>
+
+        <Card style={{ borderTop: '4px solid var(--color-blue)' }}>
+          <div style={{ display: 'flex', gap: '1rem' }}>
+            <Target className="text-secondary" />
+            <div>
+              <div className="text-secondary" style={{ fontSize: '0.875rem' }}>Peak Focus</div>
+              <div style={{ fontSize: '1.2rem', fontWeight: 600 }}>{peakFocus}</div>
+              <div className="text-muted" style={{ fontSize: '0.75rem' }}>{minutesToLabel(maxBucketMinutes)} logged in your strongest hour bucket.</div>
             </div>
           </div>
         </Card>
 
-        {/* Most Ignored Topic */}
         <Card style={{ borderTop: '4px solid var(--text-muted)' }}>
-          <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
-            <div style={{ padding: '0.75rem', backgroundColor: 'var(--surface-hover)', borderRadius: 'var(--radius-md)' }}>
-              <Ghost className="text-secondary" />
-            </div>
+         <div style={{ display: 'flex', gap: '1rem' }}>
+            <Ghost className="text-secondary" />
             <div>
-              <div className="text-secondary" style={{ fontSize: '0.875rem', marginBottom: '0.25rem' }}>Most Ignored Component</div>
-              <div style={{ fontSize: '1.25rem', fontWeight: 600 }}>{ignoredTopic ? ignoredTopic.name : 'None Detected'}</div>
-              {ignoredTopic && (
-                <div className="text-muted" style={{ fontSize: '0.75rem', marginTop: '0.5rem' }}>
-                  Untouched for {Math.floor((now - (ignoredTopic.lastUpdated || now)) / 86400000)} days.
+              <div className="text-secondary" style={{ fontSize: '0.875rem' }}>Most Ignored Subject</div>
+              <div style={{ fontSize: '1.2rem', fontWeight: 600 }}>{ignoredSubject?.name ?? 'None detected'}</div>
+              {ignoredSubject && (
+                <div className="text-muted" style={{ fontSize: '0.75rem' }}>
+                  Inactive for {Math.floor((nowMs - ignoredSubject.lastSessionTime) / 86400000)} days.
                 </div>
               )}
             </div>
           </div>
         </Card>
 
-        {/* Weakest Subject */}
-        <Card style={{ borderTop: '4px solid var(--danger-color)' }}>
-          <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
-            <div style={{ padding: '0.75rem', backgroundColor: 'var(--surface-hover)', borderRadius: 'var(--radius-md)' }}>
-              <Target className="text-secondary" />
-            </div>
+        <Card style={{ borderTop: '4px solid var(--success-color)' }}>
+          <div style={{ display: 'flex', gap: '1rem' }}>
+            <CalendarCheck className="text-secondary" />
             <div>
-              <div className="text-secondary" style={{ fontSize: '0.875rem', marginBottom: '0.25rem' }}>Vulnerable Subject</div>
-              <div style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--danger-color)' }}>{weakestSubject ? (weakestSubject as Subject).name : 'Unknown System'}</div>
-              {weakestSubject && (
-                <div className="text-muted" style={{ fontSize: '0.75rem', marginTop: '0.5rem' }}>
-                  {Math.round(highestBlendedWeakness * 100)}% structural weakness matrix. 
-                  <span style={{ display: 'block', marginTop: '0.25rem', opacity: 0.8 }}>
-                    {weakestScoreComponents.mock > 0 ? `(Mock Penalty: ${Math.round(weakestScoreComponents.mock * 100)}%)` : '(Foundational Data Only)'}
-                  </span>
-                </div>
-              )}
+              <div className="text-secondary" style={{ fontSize: '0.875rem' }}>Consistency Score</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700 }}>{consistencyScore}%</div>
+              <div className="text-muted" style={{ fontSize: '0.75rem' }}>{activeDays} active day(s) in {daysTracked} tracked day(s).</div>
+            </div>
+             </div>
+        </Card>
+
+        <Card style={{ borderTop: '4px solid var(--warning-color)' }}>
+          <div style={{ display: 'flex', gap: '1rem' }}>
+            <TrendingUp className="text-secondary" />
+            <div>
+               <div className="text-secondary" style={{ fontSize: '0.875rem' }}>Session Trends</div>
+              <div>Avg session: <strong>{minutesToLabel(avgSessionMinutes)}</strong></div>
+              <div>Sessions/day (14d): <strong>{avgSessionsPerDay}</strong></div>
             </div>
           </div>
         </Card>
-
+              <Card style={{ borderTop: '4px solid var(--danger-color)' }}>
+          <div style={{ display: 'flex', gap: '1rem' }}>
+            <Gauge className="text-secondary" />
+            <div>
+              <div className="text-secondary" style={{ fontSize: '0.875rem' }}>Planner vs Actual Efficiency</div>
+              <div style={{ fontSize: '1.2rem', fontWeight: 600 }}>{efficiency === null ? 'No linked blocks yet' : `${efficiency}%`}</div>
+              <div className="text-muted" style={{ fontSize: '0.75rem' }}>{efficiencyRatios.length} linked planner block(s) evaluated.</div>
+            </div>
+          </div>
+        </Card>
       </div>
 
       <Card>
-        <h3 style={{ fontSize: '1rem', marginBottom: '1.5rem', fontWeight: 500 }}>Global Topic Profiler</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
-          {pyqTopics.map(topic => {
-            const strength = deriveStrength(topic);
-            const progress = (topic.attemptedQuestions / topic.totalQuestions) * 100;
-            const accuracy = topic.attemptedQuestions === 0 ? 0 : Math.round((topic.correctQuestions / topic.attemptedQuestions) * 100);
-            
+        <h3 style={{ fontSize: '1rem', marginBottom: '1rem', fontWeight: 500, display: 'flex', gap: '0.5rem', alignItems: 'center' }}><PieChart size={16} /> Subject-wise Time Distribution</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '0.75rem' }}>
+          {subjectMinutes.map(subject => {
+            const share = totalMinutes > 0 ? Math.round((subject.minutes / totalMinutes) * 100) : 0;
             return (
-              <Card key={topic.id} style={{ borderLeft: `3px solid ${getStatusColor(strength)}`, padding: '1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
-                  <h4 style={{ fontSize: '0.875rem', fontWeight: 600, lineHeight: 1.2 }}>{topic.name}</h4>
-                  <span style={{ 
-                    color: getStatusColor(strength), 
-                    fontSize: '0.75rem',
-                    fontWeight: 600
-                  }}>
-                    {strength}
-                  </span>
+               <div key={subject.id} style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', padding: '0.75rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem' }}>
+                  <span>{subject.name}</span>
+                  <span>{share}%</span>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>Progress Matrix:</span>
-                    <span style={{ color: 'var(--text-primary)' }}>{Math.round(progress)}% Complete</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>Precision Yield:</span>
-                    <span style={{ color: 'var(--text-primary)' }}>{accuracy}% Accurate</span>
-                  </div>
+                <div style={{ marginTop: '0.35rem', height: 6, background: 'var(--surface-hover)', borderRadius: 3 }}>
+                  <div style={{ width: `${share}%`, height: '100%', borderRadius: 3, background: subject.color || 'var(--accent-color)' }} />
                 </div>
-              </Card>
+            <div className="text-muted" style={{ fontSize: '0.75rem', marginTop: '0.3rem' }}>{minutesToLabel(subject.minutes)}</div>
+             </div>
             );
           })}
         </div>
       </Card>
-      
+      <Card>
+        <h3 style={{ fontSize: '1rem', marginBottom: '1rem', fontWeight: 500 }}>Weak Focus Pattern Detection</h3>
+        <ul style={{ margin: 0, paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          {focusWarnings.map((warning, idx) => (
+            <li key={idx}>{warning}</li>
+          ))}
+          <li>PYQ attempts tracked: {pyqAttempts}</li>
+          <li>Completed planner blocks: {completedSlots.length}</li>
+        </ul>
+      </Card>
     </div>
   );
 }

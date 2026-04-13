@@ -6,6 +6,22 @@ import { Plus, CheckCircle, Circle, Trash2, Clock } from 'lucide-react';
 import { SubjectTag } from '../components/SubjectTag';
 import { resolveSubjectColor } from '../utils/subjectColors';
 
+const CREATE_NEW_SESSION = '__create_new__';
+
+const getSlotTimestamps = (slot: PlannerSlot) => {
+  const startTime = new Date(`${slot.date}T${slot.startTime}:00`).getTime();
+  const endTime = new Date(`${slot.date}T${slot.endTime}:00`).getTime();
+  return { startTime, endTime };
+};
+
+const formatDuration = (durationMinutes: number) => {
+  const hours = Math.floor(durationMinutes / 60);
+  const mins = durationMinutes % 60;
+  if (hours === 0) return `${mins}m`;
+  if (mins === 0) return `${hours}h`;
+  return `${hours}h ${mins}m`;
+};
+
 export default function Planner() {
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [newStartTime, setNewStartTime] = useState('09:00');
@@ -19,6 +35,63 @@ export default function Planner() {
     () => db.plannerSlots.where('date').equals(selectedDate).sortBy('startTime'),
     [selectedDate]
   ) || [];
+
+ const adjustSubjectTimeSpent = async (subjectId: number, deltaMinutes: number) => {
+    if (!deltaMinutes) return;
+    const subject = await db.subjects.get(subjectId);
+    if (!subject) return;
+    const next = Math.max(0, (subject.timeSpent || 0) + deltaMinutes);
+    await db.subjects.update(subjectId, { timeSpent: next });
+  };
+
+  const syncPlannerSession = async (slot: PlannerSlot) => {
+    if (!slot.id) return;
+
+    const linkedSession = slot.linkedSessionId ? await db.studySessions.get(slot.linkedSessionId) : undefined;
+    const { startTime: plannedStart, endTime: plannedEnd } = getSlotTimestamps(slot);
+    const plannedDuration = Math.max(1, Math.round((plannedEnd - plannedStart) / 60000));
+
+    const startTime = linkedSession?.startTime ?? plannedStart;
+    const endTime = linkedSession?.endTime ?? plannedEnd;
+    const durationMinutes = linkedSession?.durationMinutes ?? plannedDuration;
+
+    const existing = (await db.studySessions.filter(s => s.plannerSlotId === slot.id).toArray())[0];
+
+    if (existing?.id) {
+      const delta = durationMinutes - existing.durationMinutes;
+      await db.studySessions.update(existing.id, {
+        subjectId: slot.subjectId,
+        topicId: slot.topicId,
+        startTime,
+        endTime,
+        durationMinutes,
+        type: 'planned'
+      });
+      await adjustSubjectTimeSpent(slot.subjectId, delta);
+      return;
+    }
+
+    await db.studySessions.add({
+      subjectId: slot.subjectId,
+      topicId: slot.topicId,
+      startTime,
+      endTime,
+      durationMinutes,
+      type: 'planned',
+      plannerSlotId: slot.id,
+      questionsSolved: 0,
+      pyqsSolved: 0
+    });
+    await adjustSubjectTimeSpent(slot.subjectId, durationMinutes);
+  };
+
+  const clearPlannerSession = async (slot: PlannerSlot) => {
+    if (!slot.id) return;
+    const existing = (await db.studySessions.filter(s => s.plannerSlotId === slot.id).toArray())[0];
+    if (!existing?.id) return;
+    await db.studySessions.delete(existing.id);
+    await adjustSubjectTimeSpent(slot.subjectId, -existing.durationMinutes);
+  };
 
   const handleAddSlot = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,15 +107,27 @@ export default function Planner() {
     });
   };
 
-  const toggleComplete = async (e: React.MouseEvent, id?: number, completed?: boolean) => {
+  const toggleComplete = async (e: React.MouseEvent, slot: PlannerSlot) => {
     e.stopPropagation();
-    if (!id) return;
-    await db.plannerSlots.update(id, { completed: !completed });
+    if (!slot.id) return;
+
+    const nextCompleted = !slot.completed;
+    await db.plannerSlots.update(slot.id, { completed: nextCompleted });
+
+    const updatedSlot: PlannerSlot = { ...slot, completed: nextCompleted };
+    if (nextCompleted) {
+      await syncPlannerSession(updatedSlot);
+    } else {
+      await clearPlannerSession(updatedSlot);
+    }
   };
 
   const handleDelete = async (id?: number) => {
     if (!id) return;
-    await db.plannerSlots.delete(id);
+   const slot = await db.plannerSlots.get(id);
+    if (slot?.completed) {
+      await clearPlannerSession(slot);
+    }
   };
 
   const getMinutes = (timeStr: string) => {
@@ -50,7 +135,6 @@ export default function Planner() {
     return h * 60 + m;
   };
 
-  // Basic overlap staggering
   const processSlots = (slotsArr: PlannerSlot[]) => {
     const processed = slotsArr.map(s => ({ ...s, col: 0, maxCol: 1 }));
     for (let i = 0; i < processed.length; i++) {
@@ -76,14 +160,44 @@ export default function Planner() {
   const processedSlots = processSlots(slots);
 
   const getDaySessions = () => {
-    // Return sessions roughly from the selected date
-    return sessions.filter(s => new Date(s.startTime).toISOString().startsWith(selectedDate));
+    return sessions
+      .filter(s => new Date(s.startTime).toISOString().startsWith(selectedDate) && !s.plannerSlotId)
+      .sort((a, b) => a.startTime - b.startTime);
   };
 
-  const linkSession = async (slotId: number, sessionId: number | '') => {
-    await db.plannerSlots.update(slotId, { 
-      linkedSessionId: sessionId === '' ? undefined : sessionId 
+  const createSessionFromSlot = async (slot: PlannerSlot) => {
+    const { startTime, endTime } = getSlotTimestamps(slot);
+    const durationMinutes = Math.max(1, Math.round((endTime - startTime) / 60000));
+    const id = await db.studySessions.add({
+      subjectId: slot.subjectId,
+      topicId: slot.topicId,
+      startTime,
+      endTime,
+      durationMinutes,
+      type: slot.type,
+      questionsSolved: 0,
+      pyqsSolved: 0
     });
+     return Number(id);
+  };
+
+  const linkSession = async (slot: PlannerSlot, selection: string) => {
+    if (!slot.id) return;
+
+    let linkedSessionId: number | undefined;
+    if (!selection) {
+      linkedSessionId = undefined;
+    } else if (selection === CREATE_NEW_SESSION) {
+      linkedSessionId = await createSessionFromSlot(slot);
+    } else {
+      linkedSessionId = Number(selection);
+    }
+
+    await db.plannerSlots.update(slot.id, { linkedSessionId });
+
+    if (slot.completed) {
+      await syncPlannerSession({ ...slot, linkedSessionId });
+    }
   };
 
   return (
@@ -108,7 +222,7 @@ export default function Planner() {
             {subjects?.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </Select>
 
-          <Select value={newType} onChange={(e) => setNewType(e.target.value as any)} style={{ width: '150px' }}>
+          <Select value={newType} onChange={(e) => setNewType(e.target.value as 'lecture' | 'practice' | 'revision' | 'test')} style={{ width: '150px' }}>
             <option value="lecture">Lecture / Theory</option>
             <option value="practice">Practice / PYQ</option>
             <option value="revision">Revision</option>
@@ -119,11 +233,9 @@ export default function Planner() {
         </form>
       </Card>
 
-      {/* Time-Block Layout */}
       <div style={{ position: 'relative', marginTop: '1rem', backgroundColor: 'var(--surface-color)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', overflowY: 'auto', height: '800px' }}>
         
-        {/* Axis */}
-        <div style={{ position: 'relative', minHeight: `${24 * 60}px` }}> {/* 1px per minute */}
+        <div style={{ position: 'relative', minHeight: `${24 * 60}px` }}>
           {timelineHours.map(hour => (
             <div key={hour} style={{ position: 'absolute', top: `${hour * 60}px`, left: 0, width: '100%', borderTop: '1px solid var(--border-subtle)', display: 'flex' }}>
               <div style={{ width: '60px', padding: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.75rem', textAlign: 'right' }}>
@@ -132,7 +244,6 @@ export default function Planner() {
             </div>
           ))}
 
-          {/* Slots */}
           <div style={{ position: 'absolute', top: 0, left: '60px', right: '10px', height: '100%' }}>
             {processedSlots.map(slot => {
               const startMin = getMinutes(slot.startTime);
@@ -166,7 +277,7 @@ export default function Planner() {
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <button onClick={(e) => toggleComplete(e, slot.id, slot.completed)} style={{ color: slot.completed ? 'var(--success-color)' : 'var(--text-secondary)' }}>
+                      <button onClick={(e) => toggleComplete(e, slot)} style={{ color: slot.completed ? 'var(--success-color)' : 'var(--text-secondary)' }}>
                         {slot.completed ? <CheckCircle size={18} /> : <Circle size={18} />}
                       </button>
                       <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>
@@ -182,25 +293,25 @@ export default function Planner() {
                     {slot.startTime} - {slot.endTime} • <span style={{ textTransform: 'capitalize' }}>{slot.type}</span>
                   </div>
 
-                  {/* Linking UI */}
                   <div style={{ marginTop: 'auto', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                     {!linkedSession ? (
-                        <Select 
-                          style={{ fontSize: '0.70rem', padding: '0.2rem', backgroundColor: 'transparent' }} 
-                          value=""
-                          onChange={(e) => linkSession(slot.id!, Number(e.target.value))}
-                        >
-                          <option value="">Link Actual Session...</option>
-                          {getDaySessions().map(sess => (
-                            <option key={sess.id} value={sess.id!}>{sess.durationMinutes}m ({sess.type})</option>
-                          ))}
-                        </Select>
-                     ) : (
-                        <div style={{ fontSize: '0.75rem', color: 'var(--success-color)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                          <Clock size={12}/> Logged: {linkedSession.durationMinutes} mins
-                          <Button variant="ghost" onClick={(e) => { e.stopPropagation(); linkSession(slot.id!, ''); }} style={{ padding: '0 0.2rem' }}>x</Button>
-                        </div>
-                     )}
+                    {!linkedSession ? (
+                      <Select
+                        style={{ fontSize: '0.70rem', padding: '0.2rem', backgroundColor: 'transparent' }}
+                        value=""
+                        onChange={(e) => linkSession(slot, e.target.value)}
+                      >
+                        <option value="">Link Actual Session...</option>
+                        {getDaySessions().map(sess => (
+                          <option key={sess.id} value={sess.id!}>{formatDuration(sess.durationMinutes)} ({sess.type})</option>
+                        ))}
+                        <option value={CREATE_NEW_SESSION}>Create new session</option>
+                      </Select>
+                    ) : (
+                      <div style={{ fontSize: '0.75rem', color: 'var(--success-color)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                        <Clock size={12} /> Actual: {formatDuration(linkedSession.durationMinutes)}
+                        <Button variant="ghost" onClick={(e) => { e.stopPropagation(); linkSession(slot, ''); }} style={{ padding: '0 0.2rem' }}>x</Button>
+                      </div>
+                    )}
                   </div>
                 </Card>
               );

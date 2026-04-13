@@ -8,6 +8,7 @@ export interface Subject {
   startDate?: number;
   endDate?: number;
   lastUpdated?: number;
+  timeSpent?: number;
 }
 
 export interface Topic {
@@ -38,7 +39,8 @@ export interface StudySession {
   durationMinutes: number;
   subjectId: number;
   topicId?: number;
-  type: 'lecture' | 'practice' | 'revision' | 'test';
+  type: 'lecture' | 'practice' | 'revision' | 'test' | 'planned';
+  plannerSlotId?: number;
   questionsSolved: number;
   pyqsSolved: number;
 }

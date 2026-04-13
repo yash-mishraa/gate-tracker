@@ -10,6 +10,8 @@ import { resolveSubjectColor } from '../utils/subjectColors';
 export default function Subjects() {
   const subjects = useLiveQuery(() => db.subjects.toArray(), []) || [];
   const topics = useLiveQuery(() => db.topics.toArray(), []) || [];
+  const studySessions = useLiveQuery(() => db.studySessions.toArray(), []) || [];
+
 
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [bulkInput, setBulkInput] = useState('');
@@ -146,7 +148,7 @@ export default function Subjects() {
                         <SubjectTag name={subject.name} color={subject.color} />
                       </h3>
                       <div className="text-secondary" style={{ fontSize: '0.875rem', marginTop: '0.25rem' }}>
-                        {subjectTopics.length} Topics • {Math.round(progressPerc)}% Complete
+                        {subjectTopics.length} Topics • {Math.round(progressPerc)}% Complete • {Math.round(((subject.timeSpent ?? studySessions.filter(s => s.subjectId === subject.id).reduce((acc, curr) => acc + curr.durationMinutes, 0)) / 60) * 10) / 10}h Tracked
                       </div>
                     </div>
                     
