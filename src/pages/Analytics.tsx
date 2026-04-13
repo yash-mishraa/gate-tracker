@@ -2,16 +2,9 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type PyqTopic, type Subject } from '../db';
 import { Card } from '../components/ui';
 import { AlertTriangle, Clock, Target, Ghost, TrendingUp, Gauge, CalendarCheck } from 'lucide-react';
-import { isSameDay, startOfWeek, subDays, format, eachDayOfInterval } from 'date-fns';
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell, LineChart, Line } from 'recharts';
-
-const minutesToLabel = (minutes: number) => {
-  const h = Math.floor(minutes / 60);
-  const m = Math.round(minutes % 60);
-  if (h === 0) return `${m}m`;
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m}m`;
-};
+import { isSameDay, subDays, format } from 'date-fns';
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell, LineChart, Line, CartesianGrid, Area } from 'recharts';
+import { formatMinutesHuman, getCompletedMinutesByDay, getCompletedMinutesBySubject, getPastNDaysTimeSeries } from '../utils/studyStats';
 
 export default function Analytics() {
   const subjects: Subject[] = useLiveQuery(() => db.subjects.toArray()) ?? [];
@@ -21,15 +14,38 @@ export default function Analytics() {
 
   const now = new Date();
   const nowMs = now.getTime();
-  const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+  const sessionById = new Map(studySessions.map(session => [session.id!, session]));
+  const completedMinutesByDay = getCompletedMinutesByDay(plannerSlots, studySessions);
+  const completedMinutesBySubject = getCompletedMinutesBySubject(plannerSlots, studySessions);
 
-  const sessions = [...studySessions].sort((a, b) => a.startTime - b.startTime);
+
+  const sessions = plannerSlots
+    .filter(slot => slot.completed)
+    .map(slot => {
+      const linked = slot.linkedSessionId ? studySessions.find(session => session.id === slot.linkedSessionId) : undefined;
+      const startTime = new Date(`${slot.date}T${slot.startTime}:00`).getTime();
+      const endTime = new Date(`${slot.date}T${slot.endTime}:00`).getTime();
+      const durationMinutes = linked?.durationMinutes ?? Math.max(1, Math.round((endTime - startTime) / 60000));
+      return {
+        subjectId: slot.subjectId,
+        startTime,
+        endTime,
+        durationMinutes
+      };
+    })
+    .sort((a, b) => a.startTime - b.startTime);
+
   const sessionCount = sessions.length;
   const confidenceLow = sessionCount < 5;
 
-  const todayMinutes = sessions.filter(s => isSameDay(new Date(s.startTime), now)).reduce((sum, s) => sum + s.durationMinutes, 0);
-  const weekMinutes = sessions.filter(s => s.startTime >= weekStart.getTime()).reduce((sum, s) => sum + s.durationMinutes, 0);
-  const totalMinutes = sessions.reduce((sum, s) => sum + s.durationMinutes, 0);
+  const todayKey = format(now, 'yyyy-MM-dd');
+  const todayMinutes = completedMinutesByDay.get(todayKey) ?? 0;
+  const weekMinutes = Array.from({ length: 7 }).reduce((sum: number, _, idx) => {
+    const key = format(subDays(now, idx), 'yyyy-MM-dd');
+    return sum + (completedMinutesByDay.get(key) ?? 0);
+  }, 0);
+  const totalMinutes = Array.from(completedMinutesByDay.values()).reduce((sum, mins) => sum + mins, 0);
+
 
   const hourBuckets = Array(24).fill(0);
   sessions.forEach(session => {
@@ -42,7 +58,7 @@ export default function Analytics() {
     : 'Not enough timing data';
 
   const subjectMinutes = subjects.map(subject => {
-    const mins = sessions.filter(s => s.subjectId === subject.id).reduce((sum, s) => sum + s.durationMinutes, 0);
+    const mins = completedMinutesBySubject.get(subject.id!) ?? 0;
     return { ...subject, minutes: mins };
 });
 
@@ -57,14 +73,8 @@ export default function Analytics() {
     }))
     .sort((a, b) => b.hours - a.hours);
 
-  const trendDays = eachDayOfInterval({ start: subDays(now, 29), end: now });
-  const timeTrendData = trendDays.map(day => {
-    const dayMinutes = sessions.filter(s => isSameDay(new Date(s.startTime), day)).reduce((sum, s) => sum + s.durationMinutes, 0);
-    return {
-      date: format(day, 'MMM dd'),
-      hours: Number((dayMinutes / 60).toFixed(1))
-    };
-  });
+  const timeTrendData = getPastNDaysTimeSeries(completedMinutesByDay, 30, now);
+  const hasTrendData = timeTrendData.some(day => day.minutes > 0);
 
   const tenDaysMs = 10 * 86400000;
   const ignoredSubject = subjectMinutes
@@ -108,7 +118,7 @@ export default function Analytics() {
   const totalPlannedMinutes = plannerSlots.reduce((sum, slot) => sum + getSlotDurationMinutes(slot), 0);
   const totalStudiedMinutes = plannerSlots.reduce((sum, slot) => {
     if (!slot.completed) return sum;
-    const linked = slot.linkedSessionId ? sessions.find(session => session.id === slot.linkedSessionId) : undefined;
+    const linked = slot.linkedSessionId ? sessionById.get(slot.linkedSessionId) : undefined;
     return sum + (linked?.durationMinutes ?? getSlotDurationMinutes(slot));
   }, 0);
   const efficiency = totalPlannedMinutes > 0 ? Math.round((totalStudiedMinutes / totalPlannedMinutes) * 100) : 0;
@@ -135,9 +145,9 @@ export default function Analytics() {
             <Clock className="text-secondary" />
             <div>
               <div className="text-secondary" style={{ fontSize: '0.875rem' }}>Total Study Time</div>
-              <div style={{ fontWeight: 600 }}>Today: {minutesToLabel(todayMinutes)}</div>
-              <div style={{ fontWeight: 600 }}>This week: {minutesToLabel(weekMinutes)}</div>
-              <div style={{ fontWeight: 600 }}>Overall: {minutesToLabel(totalMinutes)}</div>
+              <div style={{ fontWeight: 600 }}>Today: {formatMinutesHuman(todayMinutes)}</div>
+              <div style={{ fontWeight: 600 }}>This week: {formatMinutesHuman(weekMinutes)}</div>
+              <div style={{ fontWeight: 600 }}>Overall: {formatMinutesHuman(totalMinutes)}</div>
             </div>
           </div>
         </Card>
@@ -148,7 +158,7 @@ export default function Analytics() {
             <div>
               <div className="text-secondary" style={{ fontSize: '0.875rem' }}>Peak Focus</div>
               <div style={{ fontSize: '1.2rem', fontWeight: 600 }}>{peakFocus}</div>
-              <div className="text-muted" style={{ fontSize: '0.75rem' }}>{minutesToLabel(maxBucketMinutes)} logged in your strongest hour bucket.</div>
+              <div className="text-muted" style={{ fontSize: '0.75rem' }}>{formatMinutesHuman(maxBucketMinutes)} logged in your strongest hour bucket.</div>
             </div>
           </div>
         </Card>
@@ -184,7 +194,7 @@ export default function Analytics() {
             <TrendingUp className="text-secondary" />
             <div>
               <div className="text-secondary" style={{ fontSize: '0.875rem' }}>Session Trends</div>
-              <div>Avg session: <strong>{minutesToLabel(avgSessionMinutes)}</strong></div>
+              <div>Avg session: <strong>{formatMinutesHuman(avgSessionMinutes)}</strong></div>
               <div>Sessions/day (14d): <strong>{avgSessionsPerDay}</strong></div>
             </div>
           </div>
@@ -196,7 +206,7 @@ export default function Analytics() {
             <div>
               <div className="text-secondary" style={{ fontSize: '0.875rem' }}>Planner Efficiency</div>
               <div style={{ fontSize: '1.2rem', fontWeight: 600 }}>{efficiency}%</div>
-              <div className="text-muted" style={{ fontSize: '0.75rem' }}>Planned: {minutesToLabel(totalPlannedMinutes)} • Studied: {minutesToLabel(totalStudiedMinutes)}</div>
+              <div className="text-muted" style={{ fontSize: '0.75rem' }}>Planned: {formatMinutesHuman(totalPlannedMinutes)} • Studied: {formatMinutesHuman(totalStudiedMinutes)}</div>
           </div>
         </div>
       </Card>
@@ -205,14 +215,30 @@ export default function Analytics() {
       <Card>
        <h3 style={{ fontSize: '1rem', marginBottom: '1rem', fontWeight: 500 }}>Study Time Trend (Last 30 Days)</h3>
         <div style={{ width: '100%', height: 260 }}>
-          <ResponsiveContainer>
-            <LineChart data={timeTrendData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-              <XAxis dataKey="date" stroke="var(--text-muted)" fontSize={11} tickLine={false} axisLine={false} />
-              <YAxis stroke="var(--text-muted)" fontSize={11} tickLine={false} axisLine={false} />
-              <Tooltip cursor={{ stroke: 'var(--border-color)', strokeWidth: 1 }} />
-              <Line type="monotone" dataKey="hours" stroke="var(--text-primary)" strokeWidth={2} dot={{ r: 2, fill: 'var(--text-primary)' }} />
-            </LineChart>
-          </ResponsiveContainer>
+          {hasTrendData ? (
+            <ResponsiveContainer>
+              <LineChart data={timeTrendData} margin={{ top: 12, right: 18, left: 6, bottom: 8 }}>
+                <defs>
+                  <linearGradient id="analyticsTrendFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="rgba(255,255,255,0.15)" />
+                    <stop offset="100%" stopColor="rgba(255,255,255,0.02)" />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
+                <XAxis dataKey="date" stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} />
+                <YAxis stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} />
+                <Tooltip
+                  cursor={{ stroke: 'rgba(255,255,255,0.25)', strokeWidth: 1, strokeDasharray: '4 4' }}
+                  contentStyle={{ background: '#111', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, color: '#fff', fontSize: 13, padding: '0.75rem' }}
+                  formatter={(value: any) => formatMinutesHuman(Math.round(Number(value ?? 0) * 60))}
+                />
+                <Area type="monotone" dataKey="hours" fill="url(#analyticsTrendFill)" stroke="none" />
+                <Line type="monotone" dataKey="hours" stroke="rgba(255,255,255,0.95)" strokeWidth={2.5} dot={false} activeDot={{ r: 6, fill: '#fff', stroke: 'rgba(255,255,255,0.25)', strokeWidth: 8 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="text-secondary" style={{ fontSize: '0.875rem', padding: '1rem' }}>No study data available yet</div>
+          )}
         </div>
       </Card>
 
@@ -223,9 +249,10 @@ export default function Analytics() {
             <div style={{ width: '100%', height: 280 }}>
               <ResponsiveContainer>
                 <BarChart data={subjectHoursData} layout="vertical" margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-                  <XAxis type="number" stroke="var(--text-muted)" fontSize={11} tickLine={false} axisLine={false} />
-                  <YAxis dataKey="subject" type="category" width={140} stroke="var(--text-muted)" fontSize={11} tickLine={false} axisLine={false} />
-                  <Tooltip cursor={{ fill: 'var(--surface-hover)' }} />
+                  <CartesianGrid stroke="rgba(255,255,255,0.08)" horizontal={false} />
+                  <XAxis type="number" stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} />
+                  <YAxis dataKey="subject" type="category" width={140} stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} />
+                  <Tooltip cursor={{ fill: 'var(--surface-hover)' }} contentStyle={{ background: '#111', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, color: '#fff', fontSize: 13 }} formatter={(value: any) => formatMinutesHuman(Math.round(Number(value ?? 0) * 60))} />
                   <Bar dataKey="hours" maxBarSize={26} radius={[0, 4, 4, 0]}>
                     {subjectHoursData.map(item => (
                       <Cell key={item.id} fill={item.color} />
@@ -237,7 +264,7 @@ export default function Analytics() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.8rem' }}>
               {subjectHoursData.map(item => (
                 <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem' }}>
-                  <span>{item.subject} — {item.hours}h</span>
+                  <span>{item.subject} — {formatMinutesHuman(Math.round(item.hours * 60))}</span>
                   <span className="text-muted">{item.share}%</span>
                 </div>
               ))}
@@ -256,8 +283,8 @@ export default function Analytics() {
             <li key={idx}>{warning}</li>
           ))}
           <li>PYQ attempts tracked: {pyqAttempts}</li>
-          <li>Total planned hours: {(totalPlannedMinutes / 60).toFixed(1)}h</li>
-          <li>Total studied hours: {(totalStudiedMinutes / 60).toFixed(1)}h</li>
+          <li>Total planned hours: {formatMinutesHuman(totalPlannedMinutes)}</li>
+          <li>Total studied hours: {formatMinutesHuman(totalStudiedMinutes)}</li>
           <li>Efficiency: {efficiency}%</li>
         </ul>
       </Card>

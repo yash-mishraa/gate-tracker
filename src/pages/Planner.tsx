@@ -5,6 +5,7 @@ import { Card, Button, Input, Select } from '../components/ui';
 import { Plus, CheckCircle, Circle, Trash2, Clock } from 'lucide-react';
 import { SubjectTag } from '../components/SubjectTag';
 import { resolveSubjectColor } from '../utils/subjectColors';
+import { formatMinutesHuman, getSlotDurationMinutes } from '../utils/studyStats';
 
 const CREATE_NEW_SESSION = '__create_new__';
 
@@ -12,14 +13,6 @@ const getSlotTimestamps = (slot: PlannerSlot) => {
   const startTime = new Date(`${slot.date}T${slot.startTime}:00`).getTime();
   const endTime = new Date(`${slot.date}T${slot.endTime}:00`).getTime();
   return { startTime, endTime };
-};
-
-const formatDuration = (durationMinutes: number) => {
-  const hours = Math.floor(durationMinutes / 60);
-  const mins = durationMinutes % 60;
-  if (hours === 0) return `${mins}m`;
-  if (mins === 0) return `${hours}h`;
-  return `${hours}h ${mins}m`;
 };
 
 export default function Planner() {
@@ -37,14 +30,6 @@ export default function Planner() {
   ) || [];
   const allSlots = useLiveQuery(() => db.plannerSlots.toArray()) || [];
 
- const adjustSubjectTimeSpent = async (subjectId: number, deltaMinutes: number) => {
-    if (!deltaMinutes) return;
-    const subject = await db.subjects.get(subjectId);
-    if (!subject) return;
-    const next = Math.max(0, (subject.timeSpent || 0) + deltaMinutes);
-    await db.subjects.update(subjectId, { timeSpent: next });
-  };
-
   const syncPlannerSession = async (slot: PlannerSlot) => {
     if (!slot.id) return;
 
@@ -59,7 +44,6 @@ export default function Planner() {
     const existing = (await db.studySessions.filter(s => s.plannerSlotId === slot.id).toArray())[0];
 
     if (existing?.id) {
-      const delta = durationMinutes - existing.durationMinutes;
       await db.studySessions.update(existing.id, {
         subjectId: slot.subjectId,
         topicId: slot.topicId,
@@ -68,7 +52,6 @@ export default function Planner() {
         durationMinutes,
         type: 'planned'
       });
-      await adjustSubjectTimeSpent(slot.subjectId, delta);
       return;
     }
 
@@ -83,7 +66,6 @@ export default function Planner() {
       questionsSolved: 0,
       pyqsSolved: 0
     });
-    await adjustSubjectTimeSpent(slot.subjectId, durationMinutes);
   };
 
   const clearPlannerSession = async (slot: PlannerSlot) => {
@@ -91,7 +73,33 @@ export default function Planner() {
     const existing = (await db.studySessions.filter(s => s.plannerSlotId === slot.id).toArray())[0];
     if (!existing?.id) return;
     await db.studySessions.delete(existing.id);
-    await adjustSubjectTimeSpent(slot.subjectId, -existing.durationMinutes);
+      };
+
+  const recalculateStudyStats = async () => {
+    const [allPlannerSlots, allSessions] = await Promise.all([
+      db.plannerSlots.toArray(),
+      db.studySessions.toArray()
+    ]);
+
+    for (const slot of allPlannerSlots) {
+      if (!slot.id) continue;
+      if (slot.completed) {
+        await syncPlannerSession(slot);
+      } else {
+        await clearPlannerSession(slot);
+      }
+    }
+
+    const plannedSessions = allSessions.filter(session => session.plannerSlotId);
+    const validSlotIds = new Set(allPlannerSlots.map(slot => slot.id).filter((id): id is number => Boolean(id)));
+    const orphanSessionIds = plannedSessions
+      .filter(session => !session.plannerSlotId || !validSlotIds.has(session.plannerSlotId))
+      .map(session => session.id)
+      .filter((id): id is number => Boolean(id));
+
+    if (orphanSessionIds.length > 0) {
+      await db.studySessions.bulkDelete(orphanSessionIds);
+    }
   };
 
   const handleAddSlot = async (e: React.FormEvent) => {
@@ -115,21 +123,13 @@ export default function Planner() {
     const nextCompleted = !slot.completed;
     await db.plannerSlots.update(slot.id, { completed: nextCompleted });
 
-    const updatedSlot: PlannerSlot = { ...slot, completed: nextCompleted };
-    if (nextCompleted) {
-      await syncPlannerSession(updatedSlot);
-    } else {
-      await clearPlannerSession(updatedSlot);
-    }
+    await recalculateStudyStats();
   };
 
   const handleDelete = async (id?: number) => {
     if (!id) return;
-    const slot = await db.plannerSlots.get(id);
-    if (slot?.completed) {
-      await clearPlannerSession(slot);
-    }
     await db.plannerSlots.delete(id);
+    await recalculateStudyStats();
   };
 
   const getMinutes = (timeStr: string) => {
@@ -183,13 +183,6 @@ export default function Planner() {
      return Number(id);
   };
 
-
-  
-  const getSlotDurationMinutes = (slot: PlannerSlot) => {
-    const { startTime, endTime } = getSlotTimestamps(slot);
-    return Math.max(1, Math.round((endTime - startTime) / 60000));
-  };
-
   const totalPlannedMinutes = allSlots.reduce((sum, slot) => sum + getSlotDurationMinutes(slot), 0);
   const totalStudiedMinutes = allSlots.reduce((sum, slot) => {
     if (!slot.completed) return sum;
@@ -217,6 +210,7 @@ export default function Planner() {
 
     if (slot.completed) {
       await syncPlannerSession({ ...slot, linkedSessionId });
+      await recalculateStudyStats();      
     }
   };
 
@@ -256,11 +250,11 @@ export default function Planner() {
  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
         <Card>
           <div className="text-secondary" style={{ fontSize: '0.75rem', marginBottom: '0.4rem' }}>Total Hours Planned</div>
-          <div style={{ fontSize: '1.5rem', fontWeight: 600 }}>{(totalPlannedMinutes / 60).toFixed(1)}h</div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 600 }}>{formatMinutesHuman(totalPlannedMinutes)}</div>
         </Card>
         <Card>
           <div className="text-secondary" style={{ fontSize: '0.75rem', marginBottom: '0.4rem' }}>Total Hours Studied</div>
-          <div style={{ fontSize: '1.5rem', fontWeight: 600 }}>{(totalStudiedMinutes / 60).toFixed(1)}h</div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 600 }}>{formatMinutesHuman(totalStudiedMinutes)}</div>
         </Card>
         <Card>
           <div className="text-secondary" style={{ fontSize: '0.75rem', marginBottom: '0.4rem' }}>Efficiency</div>
@@ -337,13 +331,13 @@ export default function Planner() {
                       >
                         <option value="">Link Actual Session...</option>
                         {getDaySessions().map(sess => (
-                          <option key={sess.id} value={sess.id!}>{formatDuration(sess.durationMinutes)} ({sess.type})</option>
+                          <option key={sess.id} value={sess.id!}>{formatMinutesHuman(sess.durationMinutes)} ({sess.type})</option>
                         ))}
                         <option value={CREATE_NEW_SESSION}>Create new session</option>
                       </Select>
                     ) : (
                       <div style={{ fontSize: '0.75rem', color: 'var(--success-color)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                        <Clock size={12} /> Actual: {formatDuration(linkedSession.durationMinutes)}
+                        <Clock size={12} /> Actual: {formatMinutesHuman(linkedSession.durationMinutes)}
                         <Button variant="ghost" onClick={(e) => { e.stopPropagation(); linkSession(slot, ''); }} style={{ padding: '0 0.2rem' }}>x</Button>
                       </div>
                     )}

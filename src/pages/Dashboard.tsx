@@ -1,66 +1,41 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type PyqTopic } from '../db';
 import { Card, Button } from '../components/ui';
-import { format, subDays, isSameDay, eachDayOfInterval } from 'date-fns';
-import { LineChart, Line, XAxis, Tooltip, ResponsiveContainer, YAxis, BarChart, Bar, Cell } from 'recharts';
+import { LineChart, Line, XAxis, Tooltip, ResponsiveContainer, YAxis, BarChart, Bar, Cell, CartesianGrid, Area } from 'recharts';
 import { useNavigate } from 'react-router-dom';
 import { SubjectTag } from '../components/SubjectTag';
 import { resolveSubjectColor } from '../utils/subjectColors';
-
+import { calculateStreaks, formatMinutesHuman, getCompletedMinutesByDay, getCompletedMinutesBySubject, getPastNDaysTimeSeries } from '../utils/studyStats';
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const sessions = useLiveQuery(() => db.studySessions.toArray()) ?? [];
+  const plannerSlots = useLiveQuery(() => db.plannerSlots.toArray()) ?? [];
   const subjects = useLiveQuery(() => db.subjects.toArray()) ?? [];
   const pyqTopics = useLiveQuery(() => db.pyqTopics.toArray()) ?? [];
 
   const now = new Date();
+  const completedMinutesByDay = getCompletedMinutesByDay(plannerSlots, sessions);
+  const completedMinutesBySubject = getCompletedMinutesBySubject(plannerSlots, sessions);
 
   // --- Streak Engine ---
-  let currentStreak = 0;
-  let maxStreak = 0;
-  let tempStreak = 0;
-
-  // We look back over a whole year to accurately calculate historical max streak
-  for (let i = 0; i < 365; i++) {
-    const d = subDays(now, i);
-    const hasSess = sessions.some(s => isSameDay(new Date(s.startTime), d));
-
-    // For current streak
-    if (i === 0 && !hasSess) {
-      // It's today, we might just not have studied yet. Don't break current streak, but tempStreak stays 0 unless yesterday had one
-      continue;
-    }
-
-    if (hasSess) {
-      tempStreak++;
-      if (currentStreak === i - 1 || (i === 0)) currentStreak = tempStreak;
-      if (tempStreak > maxStreak) maxStreak = tempStreak;
-    } else {
-      tempStreak = 0;
-    }
-  }
+  const { currentStreak, longestStreak } = calculateStreaks(completedMinutesByDay, now);
 
   // --- Daily Hours Chart Data ---
-  const last14Days = eachDayOfInterval({ start: subDays(now, 13), end: now });
-  const chartData = last14Days.map(d => {
-    const daySessions = sessions.filter(s => isSameDay(new Date(s.startTime), d));
-    const hours = daySessions.reduce((acc, s) => acc + s.durationMinutes, 0) / 60;
-    return {
-      date: format(d, 'MMM dd'),
-      hours: Number(hours.toFixed(1))
-    };
-  });
+  const chartData = getPastNDaysTimeSeries(completedMinutesByDay, 14, now);
+  const hasTrajectoryData = chartData.some(day => day.minutes > 0);
+
   const avgHours = chartData.length ? chartData.reduce((acc, day) => acc + day.hours, 0) / chartData.length : 0;
-  const chartDataWithBaseline = chartData.map(d => ({ ...d, baseline: Number(avgHours.toFixed(1)) }));
+  const chartDataWithBaseline = chartData.map(d => ({ ...d, baseline: Number(avgHours.toFixed(2)) }));
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
+      const value = Number(payload[0]?.value ?? 0);      
       return (
-        <div style={{ backgroundColor: '#1A1A1A', border: '1px solid var(--border-color)', padding: '0.75rem', borderRadius: '4px', color: '#fff', fontSize: '0.875rem' }}>
-          <p style={{ margin: 0, fontWeight: 600, marginBottom: '0.25rem' }}>{label}</p>
-          <p style={{ margin: 0, color: 'var(--text-secondary)' }}>
-            Focused: <span style={{ color: 'var(--text-primary)' }}>{payload[0].value} hrs</span>
+        <div style={{ backgroundColor: '#111', border: '1px solid rgba(255,255,255,0.15)', padding: '0.75rem 0.9rem', borderRadius: '10px', color: '#fff', fontSize: '13px' }}>
+          <p style={{ margin: 0, fontWeight: 600, marginBottom: '0.25rem', color: 'rgba(255,255,255,0.9)' }}>{label}</p>
+          <p style={{ margin: 0, color: 'rgba(255,255,255,0.95)', fontWeight: 700 }}>
+            Focused: {formatMinutesHuman(Math.round(value * 60))}
           </p>
         </div>
       );
@@ -140,9 +115,7 @@ export default function Dashboard() {
   
   const subjectHoursData = subjects
     .map(sub => {
-      const minutes = sessions
-        .filter(session => session.subjectId === sub.id)
-        .reduce((acc, session) => acc + session.durationMinutes, 0);
+      const minutes = completedMinutesBySubject.get(sub.id!) ?? 0;
       return {
         id: sub.id,
         subject: sub.name,
@@ -165,7 +138,7 @@ export default function Dashboard() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
         <Card>
           <div className="text-secondary" style={{ fontSize: '0.875rem', marginBottom: '0.5rem' }}>Longest Streak</div>
-          <div style={{ fontSize: '2rem', fontWeight: 600, color: 'var(--color-green)' }}>{maxStreak} <span style={{ fontSize: '1rem', color: 'var(--text-primary)' }}>Days</span></div>
+          <div style={{ fontSize: '2rem', fontWeight: 600, color: 'var(--color-green)' }}>{longestStreak} <span style={{ fontSize: '1rem', color: 'var(--text-primary)' }}>Days</span></div>
         </Card>
         <Card>
           <div className="text-secondary" style={{ fontSize: '0.875rem', marginBottom: '0.5rem' }}>Current Streak</div>
@@ -181,30 +154,35 @@ export default function Dashboard() {
       <Card style={{ paddingRight: '2rem' }}>
         <h3 style={{ fontSize: '1rem', marginBottom: '1.5rem', fontWeight: 500 }}>Execution Trajectory (Past 14 Days)</h3>
         <div style={{ width: '100%', height: 250 }}>
-          <ResponsiveContainer>
-            <LineChart data={chartDataWithBaseline}>
-              <XAxis dataKey="date" stroke="var(--text-muted)" fontSize={12} tickLine={false} axisLine={false} dy={10} />
-              <YAxis stroke="var(--text-muted)" fontSize={12} tickLine={false} axisLine={false} />
-              <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'var(--border-color)', strokeWidth: 1, strokeDasharray: '5 5' }} />
-              <Line
-                type="monotone"
-                dataKey="hours"
-                stroke="var(--text-primary)"
-                strokeWidth={2}
-                dot={{ r: 3, fill: 'var(--bg-color)', strokeWidth: 2 }}
-                activeDot={{ r: 5, fill: 'var(--text-primary)' }}
-              />
-              <Line
-                type="monotone"
-                dataKey="baseline"
-                stroke="rgba(59, 130, 246, 0.35)"
-                strokeWidth={2}
-                dot={false}
-                activeDot={false}
-              />
+          {hasTrajectoryData ? (
+            <ResponsiveContainer>
+              <LineChart data={chartDataWithBaseline} margin={{ top: 12, right: 18, left: 6, bottom: 8 }}>
+                <defs>
+                  <linearGradient id="dashboardTrendFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="rgba(255,255,255,0.14)" />
+                    <stop offset="100%" stopColor="rgba(255,255,255,0.02)" />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
+                <XAxis dataKey="date" stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} dy={10} />
+                <YAxis stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} />
+                <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(255,255,255,0.25)', strokeWidth: 1, strokeDasharray: '4 4' }} />
+                <Area type="monotone" dataKey="hours" fill="url(#dashboardTrendFill)" stroke="none" />
+                <Line
+                  type="monotone"
+                  dataKey="hours"
+                  stroke="rgba(255,255,255,0.95)"
+                  strokeWidth={2.5}
+                  dot={false}
+                  activeDot={{ r: 6, fill: '#fff', stroke: 'rgba(255,255,255,0.25)', strokeWidth: 8 }}
+                />
+                <Line type="monotone" dataKey="baseline" stroke="rgba(59,130,246,0.45)" strokeWidth={2} dot={false} activeDot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="text-secondary" style={{ fontSize: '0.875rem', padding: '1rem' }}>No study data available yet</div>
+          )}
 
-            </LineChart>
-          </ResponsiveContainer>
         </div>
       </Card>
 
@@ -254,9 +232,10 @@ export default function Dashboard() {
           <div style={{ width: '100%', height: 260 }}>
             <ResponsiveContainer>
               <BarChart data={subjectHoursData} layout="vertical" margin={{ top: 0, right: 10, left: 10, bottom: 0 }}>
-                <XAxis type="number" stroke="var(--text-muted)" fontSize={11} tickLine={false} axisLine={false} />
-                <YAxis dataKey="subject" type="category" width={120} stroke="var(--text-muted)" fontSize={11} tickLine={false} axisLine={false} />
-                <Tooltip cursor={{ fill: 'var(--surface-hover)' }} />
+                <CartesianGrid stroke="rgba(255,255,255,0.08)" horizontal={false} />
+                <XAxis type="number" stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} />
+                <YAxis dataKey="subject" type="category" width={120} stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} />
+                <Tooltip cursor={{ fill: 'var(--surface-hover)' }} contentStyle={{ background: '#111', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, color: '#fff', fontSize: 13 }} formatter={(value: any) => formatMinutesHuman(Math.round(Number(value ?? 0) * 60))} />
                 <Bar dataKey="hours" radius={[0, 4, 4, 0]} maxBarSize={26}>
                   {subjectHoursData.map(item => (
                     <Cell key={item.id} fill={item.color} />
