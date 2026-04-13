@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { Card } from '../components/ui';
@@ -9,7 +9,6 @@ import { calculateStreaks, formatMinutesHuman, getCompletedMinutesByDay, getComp
 const GATE_TARGET_DATE = new Date('2027-02-07T00:00:00');
 const GATE_TIMELINE_START = new Date('2026-02-07T00:00:00');
 
-// ✅ Fix 3: Moved outside component to prevent "cannot create components during render" error
 interface TooltipProps {
   active?: boolean;
   payload?: Array<{ value?: number }>;
@@ -29,6 +28,13 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps) => {
     );
   }
   return null;
+};
+
+// ✅ Cast to any to escape Recharts' overly strict Formatter generic
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const barFormatter = (value: any): [string, string] => {
+  const num = parseFloat(String(value));
+  return [formatMinutesHuman(Math.round((isNaN(num) ? 0 : num) * 60)), 'Focused'];
 };
 
 export default function Dashboard() {
@@ -82,7 +88,6 @@ export default function Dashboard() {
     .filter(item => item.hours > 0)
     .sort((a, b) => b.hours - a.hours);
 
-  // ✅ Fix 1: Removed useMemo wrappers — React Compiler handles memoization automatically
   const daysLeft = (() => {
     const diffTime = GATE_TARGET_DATE.getTime() - today.getTime();
     return Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
@@ -261,7 +266,7 @@ export default function Dashboard() {
         </div>
       </Card>
 
-           <Card>
+      <Card>
         <h3 style={{ fontSize: '1rem', marginBottom: '1.5rem', fontWeight: 500 }}>Subject-wise Study Hours</h3>
         {subjectHoursData.length > 0 ? (
           <div style={{ width: '100%', height: 260 }}>
@@ -275,7 +280,7 @@ export default function Dashboard() {
                   contentStyle={{ background: '#111', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, color: '#fff', fontSize: 13 }}
                   labelStyle={{ color: 'rgba(255,255,255,0.9)', fontWeight: 600, marginBottom: '0.25rem' }}
                   itemStyle={{ color: 'rgba(255,255,255,0.95)', fontWeight: 700 }}
-                  formatter={(value: number) => [formatMinutesHuman(Math.round(value * 60)), 'Focused']}
+                  formatter={barFormatter}
                 />
                 <Bar dataKey="hours" radius={[0, 4, 4, 0]} maxBarSize={26}>
                   {subjectHoursData.map(item => (
@@ -289,7 +294,6 @@ export default function Dashboard() {
           <div className="text-secondary" style={{ fontSize: '0.875rem' }}>No telemetry data captured. Boot the timer module.</div>
         )}
       </Card>
-
     </div>
   );
 }
