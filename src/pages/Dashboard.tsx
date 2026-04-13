@@ -2,7 +2,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type PyqTopic } from '../db';
 import { Card, Button } from '../components/ui';
 import { format, subDays, isSameDay, eachDayOfInterval } from 'date-fns';
-import { LineChart, Line, XAxis, Tooltip, ResponsiveContainer, YAxis } from 'recharts';
+import { LineChart, Line, XAxis, Tooltip, ResponsiveContainer, YAxis, BarChart, Bar, Cell } from 'recharts';
 import { useNavigate } from 'react-router-dom';
 import { SubjectTag } from '../components/SubjectTag';
 import { resolveSubjectColor } from '../utils/subjectColors';
@@ -137,6 +137,23 @@ export default function Dashboard() {
 
   const subjectById = new Map(subjects.map(subject => [subject.id!, subject]));
 
+  
+  const subjectHoursData = subjects
+    .map(sub => {
+      const minutes = sessions
+        .filter(session => session.subjectId === sub.id)
+        .reduce((acc, session) => acc + session.durationMinutes, 0);
+      return {
+        id: sub.id,
+        subject: sub.name,
+        hours: Number((minutes / 60).toFixed(1)),
+        color: resolveSubjectColor(sub)
+      };
+    })
+    .filter(item => item.hours > 0)
+    .sort((a, b) => b.hours - a.hours);
+
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
       <div>
@@ -232,33 +249,25 @@ export default function Dashboard() {
 
       {/* Subject Distribution */}
       <Card>
-        <h3 style={{ fontSize: '1rem', marginBottom: '1.5rem', fontWeight: 500 }}>Structural Focus Ratio</h3>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          {subjects.map(sub => {
-            const subjectSess = sessions.filter(s => s.subjectId === sub.id);
-            const totalMins = subjectSess.reduce((acc, curr) => acc + (curr.durationMinutes || 0), 0);
-            if (totalMins === 0) return null;
-
-            // Relative comparison against strongest subject
-            const maxMins = Math.max(...subjects.map(s => sessions.filter(ss => ss.subjectId === s.id).reduce((a, c) => a + c.durationMinutes, 0)));
-            const focusWidth = (totalMins / maxMins) * 100;
-
-            return (
-              <div key={sub.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem' }}>
-                  <span style={{ fontWeight: 500 }}>
-                    <SubjectTag name={sub.name} color={sub.color} />
-                  </span>
-                  <span className="text-secondary">{(totalMins / 60).toFixed(1)} hrs</span>
-                </div>
-                <div style={{ width: '100%', height: '6px', backgroundColor: 'var(--surface-hover)', borderRadius: '2px', overflow: 'hidden' }}>
-                  <div style={{ width: `${focusWidth}%`, height: '100%', backgroundColor: resolveSubjectColor(sub) }} />
-                </div>
-              </div>
-            );
-          })}
-          {sessions.length === 0 && <div className="text-secondary" style={{ fontSize: '0.875rem' }}>No telemetry data captured. Boot the timer module.</div>}
-        </div>
+        <h3 style={{ fontSize: '1rem', marginBottom: '1.5rem', fontWeight: 500 }}>Subject-wise Study Hours</h3>
+        {subjectHoursData.length > 0 ? (
+          <div style={{ width: '100%', height: 260 }}>
+            <ResponsiveContainer>
+              <BarChart data={subjectHoursData} layout="vertical" margin={{ top: 0, right: 10, left: 10, bottom: 0 }}>
+                <XAxis type="number" stroke="var(--text-muted)" fontSize={11} tickLine={false} axisLine={false} />
+                <YAxis dataKey="subject" type="category" width={120} stroke="var(--text-muted)" fontSize={11} tickLine={false} axisLine={false} />
+                <Tooltip cursor={{ fill: 'var(--surface-hover)' }} />
+                <Bar dataKey="hours" radius={[0, 4, 4, 0]} maxBarSize={26}>
+                  {subjectHoursData.map(item => (
+                    <Cell key={item.id} fill={item.color} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <div className="text-secondary" style={{ fontSize: '0.875rem' }}>No telemetry data captured. Boot the timer module.</div>
+        )}
       </Card>
 
     </div>

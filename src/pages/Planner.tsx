@@ -35,6 +35,7 @@ export default function Planner() {
     () => db.plannerSlots.where('date').equals(selectedDate).sortBy('startTime'),
     [selectedDate]
   ) || [];
+  const allSlots = useLiveQuery(() => db.plannerSlots.toArray()) || [];
 
  const adjustSubjectTimeSpent = async (subjectId: number, deltaMinutes: number) => {
     if (!deltaMinutes) return;
@@ -124,10 +125,11 @@ export default function Planner() {
 
   const handleDelete = async (id?: number) => {
     if (!id) return;
-   const slot = await db.plannerSlots.get(id);
+    const slot = await db.plannerSlots.get(id);
     if (slot?.completed) {
       await clearPlannerSession(slot);
     }
+    await db.plannerSlots.delete(id);
   };
 
   const getMinutes = (timeStr: string) => {
@@ -181,6 +183,24 @@ export default function Planner() {
      return Number(id);
   };
 
+
+  
+  const getSlotDurationMinutes = (slot: PlannerSlot) => {
+    const { startTime, endTime } = getSlotTimestamps(slot);
+    return Math.max(1, Math.round((endTime - startTime) / 60000));
+  };
+
+  const totalPlannedMinutes = allSlots.reduce((sum, slot) => sum + getSlotDurationMinutes(slot), 0);
+  const totalStudiedMinutes = allSlots.reduce((sum, slot) => {
+    if (!slot.completed) return sum;
+    const linked = slot.linkedSessionId ? sessions.find(session => session.id === slot.linkedSessionId) : undefined;
+    return sum + (linked?.durationMinutes ?? getSlotDurationMinutes(slot));
+  }, 0);
+  const efficiencyPercent = totalPlannedMinutes > 0
+    ? Math.round((totalStudiedMinutes / totalPlannedMinutes) * 100)
+    : 0;
+
+
   const linkSession = async (slot: PlannerSlot, selection: string) => {
     if (!slot.id) return;
 
@@ -232,6 +252,21 @@ export default function Planner() {
           <Button type="submit"><Plus size={16} /> Block Time</Button>
         </form>
       </Card>
+
+ <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
+        <Card>
+          <div className="text-secondary" style={{ fontSize: '0.75rem', marginBottom: '0.4rem' }}>Total Hours Planned</div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 600 }}>{(totalPlannedMinutes / 60).toFixed(1)}h</div>
+        </Card>
+        <Card>
+          <div className="text-secondary" style={{ fontSize: '0.75rem', marginBottom: '0.4rem' }}>Total Hours Studied</div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 600 }}>{(totalStudiedMinutes / 60).toFixed(1)}h</div>
+        </Card>
+        <Card>
+          <div className="text-secondary" style={{ fontSize: '0.75rem', marginBottom: '0.4rem' }}>Efficiency</div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 600 }}>{efficiencyPercent}%</div>
+        </Card>
+      </div>
 
       <div style={{ position: 'relative', marginTop: '1rem', backgroundColor: 'var(--surface-color)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', overflowY: 'auto', height: '800px' }}>
         

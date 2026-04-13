@@ -70,8 +70,10 @@ export interface Test {
   id?: number;
   name: string;
   date: number; // timestamp
-  totalMarks: number;
-  obtainedMarks: number;
+ totalMarks: number; // legacy compatibility
+  obtainedMarks: number; // legacy compatibility
+  maxMarks?: number;
+  marksObtained?: number;
   timeTaken: number; // minutes
   difficulty?: 'Easy' | 'Medium' | 'Hard';
 }
