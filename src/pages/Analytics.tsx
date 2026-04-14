@@ -125,6 +125,18 @@ export default function Analytics() {
     return sum + (linked?.durationMinutes ?? getSlotDurationMinutes(slot));
   }, 0);
   const efficiency = totalPlannedMinutes > 0 ? Math.round((totalStudiedMinutes / totalPlannedMinutes) * 100) : 0;
+  const todaySlots = plannerSlots.filter(slot => slot.date === todayKey);
+  const todayPlannedMinutes = todaySlots.reduce((sum, slot) => sum + getSlotDurationMinutes(slot), 0);
+  const todayActualMinutes = todaySlots.reduce((sum, slot) => {
+    if (!slot.completed) return sum;
+    const linked = slot.linkedSessionId ? sessionById.get(slot.linkedSessionId) : undefined;
+    return sum + (linked?.durationMinutes ?? getSlotDurationMinutes(slot));
+  }, 0);
+  const todayEfficiency = todayPlannedMinutes > 0 ? Math.round((todayActualMinutes / todayPlannedMinutes) * 100) : 0;
+  const todayGapMinutes = todayActualMinutes - todayPlannedMinutes;
+  const todayComparisonMax = Math.max(1, todayPlannedMinutes, todayActualMinutes);
+  const todayPlannedPercent = (todayPlannedMinutes / todayComparisonMax) * 100;
+  const todayActualPercent = (todayActualMinutes / todayComparisonMax) * 100;
 
   const pyqAttempts = pyqTopics.reduce((sum, topic) => sum + topic.attemptedQuestions, 0);
 
@@ -207,13 +219,47 @@ export default function Analytics() {
           <div style={{ display: 'flex', gap: '1rem' }}>
             <Gauge className="text-secondary" />
             <div>
-              <div className="text-secondary" style={{ fontSize: '0.875rem' }}>Planner Efficiency</div>
-              <div style={{ fontSize: '1.2rem', fontWeight: 600 }}>{efficiency}%</div>
-              <div className="text-muted" style={{ fontSize: '0.75rem' }}>Planned: {formatMinutesHuman(totalPlannedMinutes)} • Studied: {formatMinutesHuman(totalStudiedMinutes)}</div>
+              <div className="text-secondary" style={{ fontSize: '0.875rem' }}>Today Target vs Actual</div>
+              <div style={{ fontSize: '1.2rem', fontWeight: 600 }}>{todayEfficiency}% efficiency</div>
+              <div className="text-muted" style={{ fontSize: '0.75rem' }}>Planned: {formatMinutesHuman(todayPlannedMinutes)} • Actual: {formatMinutesHuman(todayActualMinutes)}</div>
           </div>
         </div>
       </Card>
     </div>
+
+
+    <Card>
+      <h3 style={{ fontSize: '1rem', marginBottom: '1rem', fontWeight: 500 }}>Daily Target vs Actual</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', marginBottom: '0.35rem' }}>
+              <span className="text-secondary">Planned</span>
+              <span>{formatMinutesHuman(todayPlannedMinutes)}</span>
+            </div>
+            <div style={{ height: 8, background: 'rgba(255,255,255,0.08)', borderRadius: 999, overflow: 'hidden' }}>
+              <div style={{ width: `${todayPlannedPercent}%`, height: '100%', background: 'rgba(255,255,255,0.3)', transition: 'width 0.35s ease' }} />
+            </div>
+          </div>
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', marginBottom: '0.35rem' }}>
+              <span className="text-secondary">Actual</span>
+              <span>{formatMinutesHuman(todayActualMinutes)}</span>
+            </div>
+            <div style={{ height: 8, background: 'rgba(255,255,255,0.08)', borderRadius: 999, overflow: 'hidden' }}>
+              <div style={{ width: `${todayActualPercent}%`, height: '100%', background: 'rgba(59,130,246,0.86)', transition: 'width 0.35s ease' }} />
+            </div>
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: '1.8rem', fontWeight: 700, lineHeight: 1 }}>{todayEfficiency}%</div>
+          <div className="text-secondary" style={{ marginTop: '0.25rem', fontSize: '0.8rem' }}>efficiency</div>
+          <div style={{ marginTop: '0.5rem', color: todayGapMinutes >= 0 ? 'var(--success-color)' : 'var(--danger-color)' }}>
+            {todayGapMinutes >= 0 ? '+' : '-'}{formatMinutesHuman(Math.abs(todayGapMinutes))} {todayGapMinutes >= 0 ? 'ahead' : 'behind'}
+          </div>
+        </div>
+      </div>
+    </Card>
 
       <Card>
        <h3 style={{ fontSize: '1rem', marginBottom: '1rem', fontWeight: 500 }}>Study Time Trend (Last 30 Days)</h3>
@@ -233,6 +279,8 @@ export default function Analytics() {
                 <Tooltip
                   cursor={{ stroke: 'rgba(255,255,255,0.25)', strokeWidth: 1, strokeDasharray: '4 4' }}
                   contentStyle={{ background: '#111', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, color: '#fff', fontSize: 13, padding: '0.75rem' }}
+                  labelStyle={{ color: '#fff' }}
+                  itemStyle={{ color: '#fff' }}
                   formatter={(_value: any, _name: any, entry: any) => formatMinutesHuman(Number(entry?.payload?.minutes ?? 0))}
                 />
                 <Area type="monotone" dataKey="hours" fill="url(#analyticsTrendFill)" stroke="none" />
@@ -255,7 +303,7 @@ export default function Analytics() {
                   <CartesianGrid stroke="rgba(255,255,255,0.08)" horizontal={false} />
                   <XAxis type="number" stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} domain={[0, maxSubjectHours]} tickCount={maxSubjectHours + 1} allowDecimals={false} tickFormatter={(value) => `${value}`} />
                   <YAxis dataKey="subject" type="category" width={140} stroke="rgba(255,255,255,0.6)" tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }} tickLine={false} axisLine={false} />
-                  <Tooltip cursor={{ fill: 'var(--surface-hover)' }} contentStyle={{ background: '#111', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, color: '#fff', fontSize: 13 }} formatter={(_value: any, _name: any, entry: any) => formatMinutesHuman(Number(entry?.payload?.minutes ?? 0))} />
+                  <Tooltip cursor={{ fill: 'var(--surface-hover)' }} contentStyle={{ background: '#111', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, color: '#fff', fontSize: 13 }} labelStyle={{ color: '#fff' }} itemStyle={{ color: '#fff' }} formatter={(_value: any, _name: any, entry: any) => formatMinutesHuman(Number(entry?.payload?.minutes ?? 0))} />
                   <Bar dataKey="hours" maxBarSize={26} radius={[0, 4, 4, 0]}>
                     {subjectHoursData.map(item => (
                       <Cell key={item.id} fill={item.color} />

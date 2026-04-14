@@ -4,7 +4,7 @@ import { db } from '../db';
 import { Card } from '../components/ui';
 import { LineChart, Line, XAxis, Tooltip, ResponsiveContainer, YAxis, BarChart, Bar, Cell, CartesianGrid, Area } from 'recharts';
 import { resolveSubjectColor } from '../utils/subjectColors';
-import { calculateStreaks, formatMinutesHuman, getCompletedMinutesByDay, getCompletedMinutesBySubject, getPastNDaysTimeSeries } from '../utils/studyStats';
+import { calculateStreaks, formatMinutesHuman, getCompletedMinutesByDay, getPastNDaysTimeSeries } from '../utils/studyStats';
 
 const GATE_TARGET_DATE = new Date('2027-02-07T00:00:00');
 const GATE_TIMELINE_START = new Date('2026-02-07T00:00:00');
@@ -68,7 +68,25 @@ export default function Dashboard() {
   }, []);
 
   const completedMinutesByDay = getCompletedMinutesByDay(plannerSlots, sessions);
-  const completedMinutesBySubject = getCompletedMinutesBySubject(plannerSlots, sessions);
+  const sessionById = new Map(sessions.map(session => [session.id!, session]));
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+  const getSlotDurationMinutes = (slot: { date: string; startTime: string; endTime: string }) => {
+    const start = new Date(`${slot.date}T${slot.startTime}:00`).getTime();
+    const end = new Date(`${slot.date}T${slot.endTime}:00`).getTime();
+    return Math.max(1, Math.round((end - start) / 60000));
+  };
+
+  const todaySlots = plannerSlots.filter(slot => slot.date === todayKey);
+  const todayPlannedMinutes = todaySlots.reduce((sum, slot) => sum + getSlotDurationMinutes(slot), 0);
+  const todayActualMinutes = todaySlots.reduce((sum, slot) => {
+    if (!slot.completed) return sum;
+    const linked = slot.linkedSessionId ? sessionById.get(slot.linkedSessionId) : undefined;
+    return sum + (linked?.durationMinutes ?? getSlotDurationMinutes(slot));
+  }, 0);
+  const todayEfficiency = todayPlannedMinutes > 0 ? Math.round((todayActualMinutes / todayPlannedMinutes) * 100) : 0;
+  const todayGapMinutes = todayActualMinutes - todayPlannedMinutes;
+
   const { currentStreak, longestStreak } = calculateStreaks(completedMinutesByDay, today);
   const chartData = getPastNDaysTimeSeries(completedMinutesByDay, 14, today);
   const hasTrajectoryData = chartData.some(day => day.minutes > 0);
@@ -76,9 +94,19 @@ export default function Dashboard() {
   const chartDataWithBaseline = chartData.map(d => ({ ...d, baseline: Number(avgHours.toFixed(2)) }));
   const maxTrendHours = Math.max(1, Math.ceil(Math.max(...chartData.map(day => day.hours), 0)));
 
+  const todayCompletedMinutesBySubject = todaySlots
+    .filter(slot => slot.completed)
+    .reduce((acc, slot) => {
+      const linked = slot.linkedSessionId ? sessionById.get(slot.linkedSessionId) : undefined;
+      const minutes = linked?.durationMinutes ?? getSlotDurationMinutes(slot);
+      acc.set(slot.subjectId, (acc.get(slot.subjectId) ?? 0) + minutes);
+      return acc;
+    }, new Map<number, number>());
+
+
   const subjectHoursData = subjects
     .map(sub => {
-      const minutes = completedMinutesBySubject.get(sub.id!) ?? 0;
+      const minutes = todayCompletedMinutesBySubject.get(sub.id!) ?? 0;
       return {
         id: sub.id,
         subject: sub.name,
@@ -89,7 +117,11 @@ export default function Dashboard() {
     })
     .filter(item => item.hours > 0)
     .sort((a, b) => b.hours - a.hours);
-    const maxSubjectHours = Math.max(1, Math.ceil(Math.max(...subjectHoursData.map(item => item.hours), 0)));
+  const maxSubjectHours = Math.max(1, Math.ceil(Math.max(...subjectHoursData.map(item => item.hours), 0)));
+  const dailyComparisonMax = Math.max(1, todayPlannedMinutes, todayActualMinutes);
+  const plannedBarWidth = (todayPlannedMinutes / dailyComparisonMax) * 100;
+  const actualBarWidth = (todayActualMinutes / dailyComparisonMax) * 100;
+
 
   const daysLeft = (() => {
     const diffTime = GATE_TARGET_DATE.getTime() - today.getTime();
@@ -190,6 +222,42 @@ export default function Dashboard() {
         </div>
       </Card>
 
+      <Card>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '1rem', flexWrap: 'wrap' }}>
+          <h3 style={{ fontSize: '1rem', fontWeight: 500 }}>Daily Target vs Actual</h3>
+          <p className="text-secondary" style={{ fontSize: '0.82rem' }}>{today.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', marginBottom: '0.35rem' }}>
+                <span className="text-secondary">Planned</span>
+                <span>{formatMinutesHuman(todayPlannedMinutes)}</span>
+              </div>
+              <div style={{ height: 8, background: 'rgba(255,255,255,0.08)', borderRadius: 999, overflow: 'hidden' }}>
+                <div style={{ width: `${plannedBarWidth}%`, height: '100%', background: 'rgba(255,255,255,0.3)', transition: 'width 0.35s ease' }} />
+              </div>
+            </div>
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', marginBottom: '0.35rem' }}>
+                <span className="text-secondary">Actual</span>
+                <span>{formatMinutesHuman(todayActualMinutes)}</span>
+              </div>
+              <div style={{ height: 8, background: 'rgba(255,255,255,0.08)', borderRadius: 999, overflow: 'hidden' }}>
+                <div style={{ width: `${actualBarWidth}%`, height: '100%', background: 'rgba(59,130,246,0.86)', transition: 'width 0.35s ease' }} />
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', justifyContent: 'center' }}>
+            <div style={{ fontSize: '1.75rem', fontWeight: 700, lineHeight: 1 }}>{todayEfficiency}%</div>
+            <div className="text-secondary" style={{ fontSize: '0.82rem' }}>efficiency</div>
+            <div style={{ fontSize: '0.92rem', color: todayGapMinutes >= 0 ? 'var(--success-color)' : 'var(--danger-color)' }}>
+              {todayGapMinutes >= 0 ? '+' : '-'}{formatMinutesHuman(Math.abs(todayGapMinutes))} {todayGapMinutes >= 0 ? 'ahead' : 'behind'}
+            </div>
+          </div>
+        </div>
+      </Card>
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem' }}>
         <Card style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
           <p className="text-secondary" style={{ fontSize: '0.75rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Gate Countdown</p>
@@ -270,7 +338,7 @@ export default function Dashboard() {
       </Card>
 
       <Card>
-        <h3 style={{ fontSize: '1rem', marginBottom: '1.5rem', fontWeight: 500 }}>Subject-wise Study Hours</h3>
+        <h3 style={{ fontSize: '1rem', marginBottom: '1.5rem', fontWeight: 500 }}>Subject-wise Study Hours (Today)</h3>
         {subjectHoursData.length > 0 ? (
           <div style={{ width: '100%', height: 260 }}>
             <ResponsiveContainer>
@@ -294,7 +362,7 @@ export default function Dashboard() {
             </ResponsiveContainer>
           </div>
         ) : (
-          <div className="text-secondary" style={{ fontSize: '0.875rem' }}>No telemetry data captured. Boot the timer module.</div>
+          <div className="text-secondary" style={{ fontSize: '0.875rem' }}>No completed study blocks logged for today.</div>
         )}
       </Card>
     </div>
