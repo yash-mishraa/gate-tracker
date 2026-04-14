@@ -70,34 +70,54 @@ export const getPastNDaysTimeSeries = (
 };
 
 export const calculateStreaks = (minutesByDay: Map<string, number>, now = new Date()) => {
+  const activeDateKeys = [...minutesByDay.entries()]
+    .filter(([, minutes]) => minutes > 0)
+    .map(([key]) => key)
+    .sort();
+
+
+  if (activeDateKeys.length === 0) {
+    return { currentStreak: 0, longestStreak: 0 };
+  }
+
+  const activeDateSet = new Set(activeDateKeys);
+  const todayKey = format(now, 'yyyy-MM-dd');
+  const yesterdayKey = format(subDays(now, 1), 'yyyy-MM-dd');
+  const streakStartKey = activeDateSet.has(todayKey)
+    ? todayKey
+    : activeDateSet.has(yesterdayKey)
+      ? yesterdayKey
+      : '';
+
   let currentStreak = 0;
-  let longestStreak = 0;
-  let running = 0;
+  if (streakStartKey) {
+    for (let offset = 0; ; offset += 1) {
+      const key = format(subDays(new Date(`${streakStartKey}T00:00:00`), offset), 'yyyy-MM-dd');
+      if (!activeDateSet.has(key)) break;
+      currentStreak += 1;
 
-  for (let i = 0; i < 365; i++) {
-    const day = subDays(now, i);
-    const key = format(day, 'yyyy-MM-dd');
-    const isActive = (minutesByDay.get(key) ?? 0) > 0;
-
-    if (i === 0) {
-      if (isActive) {
-        currentStreak = 1;
-        running = 1;
-        longestStreak = 1;
-      }
-      continue;
-    }
-
-    if (isActive) {
-      running += 1;
-      if (i === currentStreak) {
-        currentStreak = running;
-      }
-      if (running > longestStreak) longestStreak = running;
-    } else {
-      running = 0;
     }
   }
+
+  let longestStreak = 0;
+  let runningStreak = 0;
+  let previousDate: Date | null = null;
+  activeDateKeys.forEach(key => {
+    const currentDate = new Date(`${key}T00:00:00`);
+    if (!previousDate) {
+      runningStreak = 1;
+
+    } else {
+      const prevPlusOne = new Date(previousDate);
+      prevPlusOne.setDate(prevPlusOne.getDate() + 1);
+      runningStreak = format(prevPlusOne, 'yyyy-MM-dd') === key ? runningStreak + 1 : 1;
+
+    }
+  
+    longestStreak = Math.max(longestStreak, runningStreak);
+    previousDate = currentDate;
+  });
+
 
   return { currentStreak, longestStreak };
 };
