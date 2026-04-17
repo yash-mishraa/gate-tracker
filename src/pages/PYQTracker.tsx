@@ -1,14 +1,15 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, deleteSubjectCascade, type PyqTopic, type Subject } from '../db';
+import { db, deletePyqSubjectCascade, type PyqTopic, type PyqSubject } from '../db';
 import { Card, Button, Input, ProgressBar } from '../components/ui';
 import { Plus, CheckCircle, ChevronDown, ChevronUp, Pencil, Trash2 } from 'lucide-react';
 import { SubjectTag } from '../components/SubjectTag';
 import { getDeterministicSubjectColor, resolveSubjectColor } from '../utils/subjectColors';
 
+const getPyqTopicSubjectId = (topic: PyqTopic) => topic.pyqSubjectId ?? topic.subjectId;
 
 export default function PYQTracker() {
-  const subjects = useLiveQuery(() => db.subjects.toArray(), []) || [];
+  const subjects = useLiveQuery(() => db.pyqSubjects.toArray(), []) || [];
   const pyqTopics = useLiveQuery(() => db.pyqTopics.toArray(), []) || [];
   
   const [newSubjectName, setNewSubjectName] = useState('');
@@ -47,7 +48,12 @@ export default function PYQTracker() {
     
     if (!existing) {
       const normalizedName = newSubjectName.trim();
-      await db.subjects.add({ name: normalizedName, color: getDeterministicSubjectColor(normalizedName) });
+      await db.pyqSubjects.add({
+        name: normalizedName,
+        color: getDeterministicSubjectColor(normalizedName),
+        createdAt: Date.now(),
+        lastUpdated: Date.now()
+      });
     }
     
     setNewSubjectName('');
@@ -71,10 +77,21 @@ export default function PYQTracker() {
           if (parsed > 0) total = parsed;
         }
 
-        const existing = await db.pyqTopics.where({ subjectId, name }).first();
+        const existing = (await db.pyqTopics
+          .where('pyqSubjectId')
+          .equals(subjectId)
+          .filter(topic => topic.name.toLowerCase() === name.toLowerCase())
+          .first())
+          || (await db.pyqTopics
+            .toArray()
+            .then(topics => topics.find(topic =>
+              topic.pyqSubjectId == null &&
+              topic.subjectId === subjectId &&
+              topic.name.toLowerCase() === name.toLowerCase()
+            )));
         if (!existing) {
           await db.pyqTopics.add({
-            subjectId,
+            pyqSubjectId: subjectId,
             name,
             totalQuestions: total,
             attemptedQuestions: 0,
@@ -89,7 +106,7 @@ export default function PYQTracker() {
     setBulkTopicInputs(prev => ({ ...prev, [subjectId]: '' }));
   };
 
-    const beginEditSubject = (subject: Subject) => {
+    const beginEditSubject = (subject: PyqSubject) => {
     setEditingSubjectId(subject.id || null);
     setEditingSubject({
       id: subject.id!,
@@ -116,9 +133,10 @@ export default function PYQTracker() {
       return;
     }
 
-    await db.subjects.update(editingSubjectId, {
+    await db.pyqSubjects.update(editingSubjectId, {
       name: normalizedName,
-      color: editingSubject.color || getDeterministicSubjectColor(normalizedName)
+      color: editingSubject.color || getDeterministicSubjectColor(normalizedName),
+      lastUpdated: Date.now()
     });
     setEditingSubjectId(null);
   };
@@ -126,7 +144,7 @@ export default function PYQTracker() {
   const deleteSubject = async (subjectId: number) => {
     const confirmed = confirm('Delete this subject? This will remove all its subtopics and progress.');
     if (!confirmed) return;
-    await deleteSubjectCascade(subjectId);
+    await deletePyqSubjectCascade(subjectId);
     if (expandedSubjectId === subjectId) setExpandedSubjectId(null);
     if (editingSubjectId === subjectId) setEditingSubjectId(null);
   };
@@ -250,7 +268,7 @@ export default function PYQTracker() {
           </Card>
         ) : (
           subjects.map(subject => {
-            let sTopics = pyqTopics.filter(t => t.subjectId === subject.id);
+            const sTopics = pyqTopics.filter(t => getPyqTopicSubjectId(t) === subject.id);
 
             // Stable Sorting: Primary(Strength), Secondary(Progress Asc)
             const strengthRank = { 'Weak': 1, 'Average': 2, 'Strong': 3 };

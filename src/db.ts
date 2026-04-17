@@ -23,7 +23,8 @@ export interface Topic {
 
 export interface PyqTopic {
   id?: number;
-  subjectId: number;
+  subjectId?: number;
+  pyqSubjectId?: number;
   name: string;
   totalQuestions: number;
   attemptedQuestions: number;
@@ -31,6 +32,15 @@ export interface PyqTopic {
   revisionCount?: number;
   lastUpdated?: number;
 }
+
+export interface PyqSubject {
+  id?: number;
+  name: string;
+  color?: string;
+  createdAt?: number;
+  lastUpdated?: number;
+}
+
 
 export interface StudySession {
   id?: number;
@@ -88,6 +98,7 @@ export interface TestSubject {
 
 export class GateTrackerDB extends Dexie {
   subjects!: Table<Subject>;
+  pyqSubjects!: Table<PyqSubject>;
   topics!: Table<Topic>;
   pyqTopics!: Table<PyqTopic>;
   studySessions!: Table<StudySession>;
@@ -113,6 +124,69 @@ export class GateTrackerDB extends Dexie {
       testSubjects: '++id, testId, subjectId'
     });
 
+    this.version(4).stores({
+      pyqSubjects: '++id, name',
+      pyqTopics: '++id, pyqSubjectId, subjectId, name'
+    }).upgrade(async (tx) => {
+      const pyqTopicsTable = tx.table('pyqTopics');
+      const pyqSubjectsTable = tx.table('pyqSubjects');
+      const subjectsTable = tx.table('subjects');
+
+      const existingPyqSubjects = await pyqSubjectsTable.toArray() as PyqSubject[];
+      const pyqTopics = await pyqTopicsTable.toArray() as PyqTopic[];
+      if (pyqTopics.length === 0) return;
+
+      const byName = new Map<string, number>();
+      existingPyqSubjects.forEach(subject => {
+        if (subject.id) byName.set(subject.name.trim().toLowerCase(), subject.id);
+      });
+
+      const legacySubjectIds = Array.from(new Set(
+        pyqTopics
+          .map(topic => topic.subjectId)
+          .filter((id): id is number => typeof id === 'number')
+      ));
+
+      const legacySubjects = await subjectsTable.bulkGet(legacySubjectIds) as Subject[];
+      const legacyById = new Map<number, Subject>();
+      legacySubjectIds.forEach((subjectId, index) => {
+        const subject = legacySubjects[index];
+        if (subject) legacyById.set(subjectId, subject);
+      });
+
+      const pyqSubjectIdByLegacyId = new Map<number, number>();
+
+      for (const legacyId of legacySubjectIds) {
+        const legacy = legacyById.get(legacyId);
+        const name = legacy?.name?.trim() || `Practice Subject ${legacyId}`;
+        const key = name.toLowerCase();
+        let pyqSubjectId = byName.get(key);
+
+        if (!pyqSubjectId) {
+          pyqSubjectId = await pyqSubjectsTable.add({
+            name,
+            color: legacy?.color || getDeterministicSubjectColor(name),
+            createdAt: Date.now(),
+            lastUpdated: Date.now()
+          }) as number;
+          byName.set(key, pyqSubjectId);
+        }
+
+        pyqSubjectIdByLegacyId.set(legacyId, pyqSubjectId);
+      }
+
+      for (const topic of pyqTopics) {
+        if (topic.pyqSubjectId) continue;
+        if (typeof topic.subjectId !== 'number') continue;
+
+        const resolvedPyqSubjectId = pyqSubjectIdByLegacyId.get(topic.subjectId);
+        if (!resolvedPyqSubjectId || !topic.id) continue;
+
+        await pyqTopicsTable.update(topic.id, { pyqSubjectId: resolvedPyqSubjectId });
+      }
+    });
+
+
     // Native Dexie one-time seeding
     this.on('populate', (tx) => {
       const defaultSubjects = [
@@ -129,15 +203,9 @@ export class GateTrackerDB extends Dexie {
 export const db = new GateTrackerDB();
 
 export async function deleteSubjectCascade(subjectId: number) {
-  await (db as any).transaction(
+  await db.transaction(
     'rw',
-    db.subjects,
-    db.topics,
-    db.pyqTopics,
-    db.studySessions,
-    db.plannerSlots,
-    db.notes,
-    db.testSubjects,
+    [db.subjects, db.topics, db.pyqTopics, db.studySessions, db.plannerSlots, db.notes, db.testSubjects],
     async () => {
       await db.subjects.delete(subjectId);
       await db.topics.where('subjectId').equals(subjectId).delete();
@@ -154,6 +222,30 @@ export async function deleteSubjectCascade(subjectId: number) {
 
       if (plannerSlotIds.length > 0) {
         await db.plannerSlots.bulkDelete(plannerSlotIds);
+      }
+    }
+  );
+}
+
+
+export async function deletePyqSubjectCascade(pyqSubjectId: number) {
+  await db.transaction(
+    'rw',
+    [db.pyqSubjects, db.pyqTopics],
+    async () => {
+      await db.pyqSubjects.delete(pyqSubjectId);
+
+      const topics = await db.pyqTopics.toArray();
+      const topicIdsToDelete = topics
+        .filter(topic =>
+          topic.pyqSubjectId === pyqSubjectId ||
+          (topic.pyqSubjectId == null && topic.subjectId === pyqSubjectId)
+        )
+        .map(topic => topic.id)
+        .filter((id): id is number => typeof id === 'number');
+
+      if (topicIdsToDelete.length > 0) {
+        await db.pyqTopics.bulkDelete(topicIdsToDelete);
       }
     }
   );
