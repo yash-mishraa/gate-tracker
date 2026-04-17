@@ -142,11 +142,16 @@ export default function PYQTracker() {
   };
 
   const deleteSubject = async (subjectId: number) => {
-    const confirmed = confirm('Delete this subject? This will remove all its subtopics and progress.');
+    const confirmed = window.confirm('Delete this subject? This will remove all its subtopics and progress.');
     if (!confirmed) return;
-    await deletePyqSubjectCascade(subjectId);
-    if (expandedSubjectId === subjectId) setExpandedSubjectId(null);
-    if (editingSubjectId === subjectId) setEditingSubjectId(null);
+
+    try {
+      await deletePyqSubjectCascade(subjectId);
+      if (expandedSubjectId === subjectId) setExpandedSubjectId(null);
+      if (editingSubjectId === subjectId) setEditingSubjectId(null);
+    } catch (err) {
+      console.error('Delete failed:', err);
+    }
   };
 
 
@@ -341,8 +346,12 @@ export default function PYQTracker() {
                         </Button>
                         <Button
                           variant="ghost"
-                          style={{ padding: '0.45rem', color: 'var(--color-red)' }}
-                          onClick={() => deleteSubject(subject.id!)}
+                          style={{ padding: '0.45rem', color: 'var(--color-red)', pointerEvents: 'auto', position: 'relative', zIndex: 1 }}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            void deleteSubject(subject.id!);
+                          }}
                           aria-label={`Delete ${subject.name}`}
                           title="Delete subject"
                         >

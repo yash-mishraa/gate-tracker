@@ -122,10 +122,15 @@ export default function Subjects() {
     });
   };
 
-  const handleDeleteSubject = async (e: React.MouseEvent, id: number) => {
-    e.stopPropagation();
-    if (confirm("Delete this subject? This will remove all associated topics and tracking data.")) {
+  const handleDeleteSubject = async (id: number) => {
+    if (!window.confirm('Delete this subject? This will remove all associated topics and tracking data.')) {
+      return;
+    }
+
+    try {
       await deleteSubjectCascade(id);
+    } catch (err) {
+      console.error('Delete failed:', err);
     }
   };
 
@@ -298,7 +303,15 @@ export default function Subjects() {
                     >
                       <Pencil size={16} />
                     </Button>
-                    <Button variant="ghost" style={{ color: 'var(--color-red)', padding: '0.5rem' }} onClick={(e) => handleDeleteSubject(e, subject.id!)}>
+                    <Button
+                      variant="ghost"
+                      style={{ color: 'var(--color-red)', padding: '0.5rem', pointerEvents: 'auto', position: 'relative', zIndex: 1 }}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        void handleDeleteSubject(subject.id!);
+                      }}
+                    >
                       <Trash2 size={18} />
                     </Button>
                     <Button variant="ghost" style={{ padding: '0.5rem' }} onClick={() => setExpandedId(isExpanded ? null : subject.id!)}>
