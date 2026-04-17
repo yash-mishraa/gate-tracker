@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type PyqTopic } from '../db';
+import { db, deleteSubjectCascade, type PyqTopic, type Subject } from '../db';
 import { Card, Button, Input, ProgressBar } from '../components/ui';
-import { Plus, CheckCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, CheckCircle, ChevronDown, ChevronUp, Pencil, Trash2 } from 'lucide-react';
 import { SubjectTag } from '../components/SubjectTag';
 import { getDeterministicSubjectColor, resolveSubjectColor } from '../utils/subjectColors';
 
@@ -15,6 +15,8 @@ export default function PYQTracker() {
   const [bulkTopicInputs, setBulkTopicInputs] = useState<Record<number, string>>({});
   const [editingTopic, setEditingTopic] = useState<{ id: number, name: string, total: string, attempted?: string, revisions?: string } | null>(null);
   const [expandedSubjectId, setExpandedSubjectId] = useState<number | null>(null);
+  const [editingSubject, setEditingSubject] = useState<{ id: number; name: string; color: string }>({ id: 0, name: '', color: '#0ea5e9' });
+  const [editingSubjectId, setEditingSubjectId] = useState<number | null>(null);
 
   // --- Core Analytics Computations ---
   const totalAttempted = pyqTopics.reduce((a, t) => a + t.attemptedQuestions, 0);
@@ -86,6 +88,49 @@ export default function PYQTracker() {
 
     setBulkTopicInputs(prev => ({ ...prev, [subjectId]: '' }));
   };
+
+    const beginEditSubject = (subject: Subject) => {
+    setEditingSubjectId(subject.id || null);
+    setEditingSubject({
+      id: subject.id!,
+      name: subject.name,
+      color: subject.color || getDeterministicSubjectColor(subject.name)
+    });
+  };
+
+  const saveSubjectEdits = async () => {
+    if (!editingSubjectId) return;
+    const normalizedName = editingSubject.name.trim();
+    if (!normalizedName) {
+      alert('Subject name cannot be empty.');
+      return;
+    }
+
+    const duplicate = subjects.find(
+      subject =>
+        subject.id !== editingSubjectId &&
+        subject.name.toLowerCase() === normalizedName.toLowerCase()
+    );
+    if (duplicate) {
+      alert('A subject with this name already exists.');
+      return;
+    }
+
+    await db.subjects.update(editingSubjectId, {
+      name: normalizedName,
+      color: editingSubject.color || getDeterministicSubjectColor(normalizedName)
+    });
+    setEditingSubjectId(null);
+  };
+
+  const deleteSubject = async (subjectId: number) => {
+    const confirmed = confirm('Delete this subject? This will remove all its subtopics and progress.');
+    if (!confirmed) return;
+    await deleteSubjectCascade(subjectId);
+    if (expandedSubjectId === subjectId) setExpandedSubjectId(null);
+    if (editingSubjectId === subjectId) setEditingSubjectId(null);
+  };
+
 
   const updateStats = async (topicId: number, mode: 'att-inc' | 'att-dec' | 'rev-inc' | 'rev-dec') => {
     await db.transaction('rw', db.pyqTopics, async () => {
@@ -221,6 +266,7 @@ export default function PYQTracker() {
             const subjProgress = subjTotal === 0 ? 0 : (subjAttempted / subjTotal) * 100;
             const subjectColor = resolveSubjectColor(subject);
             const isExpanded = expandedSubjectId === subject.id;
+            const isEditingSubject = editingSubjectId === subject.id;
 
             return (
               <Card
@@ -235,21 +281,66 @@ export default function PYQTracker() {
                 {/* Subject Header */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
                   <div style={{ flex: 1 }}>
-                    <h2 style={{ fontSize: '1.5rem' }}>
-                      <SubjectTag name={subject.name} color={subject.color} />
-                    </h2>
-                    <span className="text-secondary" style={{ fontWeight: 600, fontSize: '0.875rem' }}>
-                      {Math.round(subjProgress)}% Matrix Complete
-                    </span>
+                    {isEditingSubject ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto auto auto', gap: '0.5rem', alignItems: 'center' }}>
+                        <Input
+                          value={editingSubject.name}
+                          onChange={e => setEditingSubject(prev => ({ ...prev, name: e.target.value }))}
+                          placeholder="Subject name"
+                        />
+                        <Input
+                          type="color"
+                          value={editingSubject.color}
+                          onChange={e => setEditingSubject(prev => ({ ...prev, color: e.target.value }))}
+                          title="Subject color"
+                          style={{ minWidth: '2.5rem', width: '2.75rem', height: '2.3rem', padding: '0.2rem' }}
+                        />
+                        <Button onClick={saveSubjectEdits} style={{ whiteSpace: 'nowrap' }}>Save</Button>
+                        <Button variant="ghost" onClick={() => setEditingSubjectId(null)} style={{ whiteSpace: 'nowrap' }}>Cancel</Button>
+                      </div>
+                    ) : (
+                      <>
+                        <h2 style={{ fontSize: '1.5rem' }}>
+                          <SubjectTag name={subject.name} color={subject.color} />
+                        </h2>
+                        <span className="text-secondary" style={{ fontWeight: 600, fontSize: '0.875rem' }}>
+                          {Math.round(subjProgress)}% Matrix Complete
+                        </span>
+                      </>
+                    )}
                   </div>
-                  <Button
-                    variant="ghost"
-                    style={{ padding: '0.5rem' }}
-                    onClick={() => setExpandedSubjectId(isExpanded ? null : subject.id!)}
-                    aria-label={isExpanded ? `Collapse ${subject.name}` : `Expand ${subject.name}`}
-                  >
-                    {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-                  </Button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    {!isEditingSubject && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          style={{ padding: '0.45rem' }}
+                          onClick={() => beginEditSubject(subject)}
+                          aria-label={`Edit ${subject.name}`}
+                          title="Edit subject"
+                        >
+                          <Pencil size={16} />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          style={{ padding: '0.45rem', color: 'var(--color-red)' }}
+                          onClick={() => deleteSubject(subject.id!)}
+                          aria-label={`Delete ${subject.name}`}
+                          title="Delete subject"
+                        >
+                          <Trash2 size={16} />
+                        </Button>
+                      </>
+                    )}
+                    <Button
+                      variant="ghost"
+                      style={{ padding: '0.5rem' }}
+                      onClick={() => setExpandedSubjectId(isExpanded ? null : subject.id!)}
+                      aria-label={isExpanded ? `Collapse ${subject.name}` : `Expand ${subject.name}`}
+                    >
+                      {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                    </Button>
+                  </div>
                 </div>
 
                 <ProgressBar progress={subjProgress} tone="green" />

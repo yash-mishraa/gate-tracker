@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Topic } from '../db';
+import { db, deleteSubjectCascade, type Topic } from '../db';
 import { Card, Button, Input } from '../components/ui';
 import { Trash2, Plus, ChevronDown, ChevronUp, Calendar, CheckSquare } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
@@ -55,14 +55,7 @@ export default function Subjects() {
   const handleDeleteSubject = async (e: React.MouseEvent, id: number) => {
     e.stopPropagation();
     if (confirm("Delete Subject? This will cascade and delete EVERYTHING including PYQs and logs linked to it.")) {
-      await db.transaction('rw', db.subjects, db.topics, db.pyqTopics, async () => {
-        await db.subjects.delete(id);
-        const tIds = topics.filter(t => t.subjectId === id).map(t => t.id!);
-        await db.topics.bulkDelete(tIds);
-        
-        const matchingPyq = await db.pyqTopics.where({ subjectId: id }).primaryKeys();
-        await db.pyqTopics.bulkDelete(matchingPyq as number[]);
-      });
+      await deleteSubjectCascade(id);
     }
   };
 

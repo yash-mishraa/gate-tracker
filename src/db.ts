@@ -127,3 +127,34 @@ export class GateTrackerDB extends Dexie {
 }
 
 export const db = new GateTrackerDB();
+
+export async function deleteSubjectCascade(subjectId: number) {
+  await (db as any).transaction(
+    'rw',
+    db.subjects,
+    db.topics,
+    db.pyqTopics,
+    db.studySessions,
+    db.plannerSlots,
+    db.notes,
+    db.testSubjects,
+    async () => {
+      await db.subjects.delete(subjectId);
+      await db.topics.where('subjectId').equals(subjectId).delete();
+      await db.pyqTopics.where('subjectId').equals(subjectId).delete();
+      await db.studySessions.where('subjectId').equals(subjectId).delete();
+      await db.notes.where('subjectId').equals(subjectId).delete();
+      await db.testSubjects.where('subjectId').equals(subjectId).delete();
+
+      const plannerSlots = await db.plannerSlots.toArray();
+      const plannerSlotIds = plannerSlots
+        .filter(slot => slot.subjectId === subjectId)
+        .map(slot => slot.id!)
+        .filter(Boolean);
+
+      if (plannerSlotIds.length > 0) {
+        await db.plannerSlots.bulkDelete(plannerSlotIds);
+      }
+    }
+  );
+}
