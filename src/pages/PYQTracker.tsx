@@ -1,8 +1,14 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, deletePyqSubjectCascade, type PyqTopic, type PyqSubject } from '../db';
+import {
+  db,
+  deletePyqSubjectCascade,
+  type PyqExam,
+  type PyqTopic,
+  type PyqSubject
+} from '../db';
 import { Card, Button, Input, ProgressBar } from '../components/ui';
-import { Plus, CheckCircle, ChevronDown, ChevronUp, Pencil, Trash2 } from 'lucide-react';
+import { Plus, CheckCircle, ChevronDown, ChevronUp, Pencil, Trash2, Link2, MoveRight } from 'lucide-react';
 import { SubjectTag } from '../components/SubjectTag';
 import { getDeterministicSubjectColor, resolveSubjectColor } from '../utils/subjectColors';
 
@@ -11,13 +17,19 @@ const getPyqTopicSubjectId = (topic: PyqTopic) => topic.pyqSubjectId ?? topic.su
 export default function PYQTracker() {
   const subjects = useLiveQuery(() => db.pyqSubjects.toArray(), []) || [];
   const pyqTopics = useLiveQuery(() => db.pyqTopics.toArray(), []) || [];
+  const exams = useLiveQuery(() => db.pyqExams.toArray(), []) || [];
+  const examSubjectMaps = useLiveQuery(() => db.pyqExamSubjectMaps.toArray(), []) || [];
   
   const [newSubjectName, setNewSubjectName] = useState('');
+  const [newExamName, setNewExamName] = useState('');
   const [bulkTopicInputs, setBulkTopicInputs] = useState<Record<number, string>>({});
   const [editingTopic, setEditingTopic] = useState<{ id: number, name: string, total: string, attempted?: string, revisions?: string } | null>(null);
   const [expandedSubjectId, setExpandedSubjectId] = useState<number | null>(null);
+  const [expandedExamId, setExpandedExamId] = useState<number | null>(null);
   const [editingSubject, setEditingSubject] = useState<{ id: number; name: string; color: string }>({ id: 0, name: '', color: '#0ea5e9' });
   const [editingSubjectId, setEditingSubjectId] = useState<number | null>(null);
+  const [subjectPickerByExam, setSubjectPickerByExam] = useState<Record<number, number>>({});
+  const [newExamSubjectByExam, setNewExamSubjectByExam] = useState<Record<number, string>>({});
 
   // --- Core Analytics Computations ---
   const totalAttempted = pyqTopics.reduce((a, t) => a + t.attemptedQuestions, 0);
@@ -35,9 +47,51 @@ export default function PYQTracker() {
   };
 
   const getTopicProgress = (t: PyqTopic) => t.attemptedQuestions / t.totalQuestions;
-
   const weakTopicsCount = pyqTopics.filter(t => deriveStrength(t) === 'Weak').length;
 
+  const getSubjectTopics = (subjectId: number) => {
+    const sTopics = pyqTopics.filter(t => getPyqTopicSubjectId(t) === subjectId);
+    const strengthRank = { Weak: 1, Average: 2, Strong: 3 } as const;
+    sTopics.sort((a, b) => {
+      const rankA = strengthRank[deriveStrength(a)];
+      const rankB = strengthRank[deriveStrength(b)];
+      if (rankA !== rankB) return rankA - rankB;
+      return getTopicProgress(a) - getTopicProgress(b);
+    });
+    return sTopics;
+  };
+
+  const getSubjectProgress = (subjectId: number) => {
+    const sTopics = getSubjectTopics(subjectId);
+    const attempted = sTopics.reduce((acc, t) => acc + t.attemptedQuestions, 0);
+    const total = sTopics.reduce((acc, t) => acc + t.totalQuestions, 0);
+    const progress = total === 0 ? 0 : (attempted / total) * 100;
+    return { attempted, total, progress, topics: sTopics };
+  };
+
+  const getExamStats = (examId: number) => {
+    const subjectIds = examSubjectMaps
+      .filter(link => link.examId === examId)
+      .map(link => link.subjectId);
+
+    const totals = subjectIds.reduce(
+      (acc, subjectId) => {
+        const progress = getSubjectProgress(subjectId);
+        acc.done += progress.attempted;
+        acc.total += progress.total;
+        return acc;
+      },
+      { done: 0, total: 0 }
+    );
+
+    return {
+      ...totals,
+      percent: totals.total === 0 ? 0 : (totals.done / totals.total) * 100,
+      subjectIds
+    };
+  };
+
+  const standaloneSubjects = subjects.filter(subject => (subject.standalone ?? true));
 
   // --- Handlers ---
   const handleAddSubject = async (e: React.FormEvent) => {
@@ -51,6 +105,7 @@ export default function PYQTracker() {
       await db.pyqSubjects.add({
         name: normalizedName,
         color: getDeterministicSubjectColor(normalizedName),
+        standalone: true,
         createdAt: Date.now(),
         lastUpdated: Date.now()
       });
@@ -58,6 +113,70 @@ export default function PYQTracker() {
     
     setNewSubjectName('');
   };
+
+  const handleAddExam = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const normalizedName = newExamName.trim();
+    if (!normalizedName) return;
+
+    const existing = exams.find(exam => exam.name.toLowerCase() === normalizedName.toLowerCase());
+    if (existing) return;
+
+    await db.pyqExams.add({
+      name: normalizedName,
+      createdAt: Date.now(),
+      lastUpdated: Date.now()
+    });
+    setNewExamName('');
+  };
+
+  const addSubjectInsideExam = async (examId: number) => {
+    const name = (newExamSubjectByExam[examId] || '').trim();
+    if (!name) return;
+
+    const duplicate = subjects.find(subject => subject.name.toLowerCase() === name.toLowerCase());
+    if (duplicate?.id) {
+      await linkSubjectToExam(examId, duplicate.id, false);
+      setNewExamSubjectByExam(prev => ({ ...prev, [examId]: '' }));
+      return;
+    }
+
+    await db.transaction('rw', [db.pyqSubjects, db.pyqExamSubjectMaps], async () => {
+      const subjectId = await db.pyqSubjects.add({
+        name,
+        color: getDeterministicSubjectColor(name),
+        standalone: false,
+        createdAt: Date.now(),
+        lastUpdated: Date.now()
+      });
+
+      await db.pyqExamSubjectMaps.add({ examId, subjectId, createdAt: Date.now() });
+    });
+
+    setNewExamSubjectByExam(prev => ({ ...prev, [examId]: '' }));
+  };
+
+  const linkSubjectToExam = async (examId: number, subjectId: number, moveIntoExam: boolean) => {
+    await db.transaction('rw', [db.pyqExamSubjectMaps, db.pyqSubjects], async () => {
+      const existing = await db.pyqExamSubjectMaps
+        .where('[examId+subjectId]')
+        .equals([examId, subjectId])
+        .first();
+
+      if (!existing) {
+        await db.pyqExamSubjectMaps.add({ examId, subjectId, createdAt: Date.now() });
+      }
+
+      if (moveIntoExam) {
+        await db.pyqSubjects.update(subjectId, { standalone: false, lastUpdated: Date.now() });
+      }
+    });
+  };
+
+  const moveSubjectToStandalone = async (subjectId: number) => {
+    await db.pyqSubjects.update(subjectId, { standalone: true, lastUpdated: Date.now() });
+  };
+
 
   const handleBulkAddPyqTopics = async (subjectId: number) => {
     const input = bulkTopicInputs[subjectId];
@@ -106,7 +225,7 @@ export default function PYQTracker() {
     setBulkTopicInputs(prev => ({ ...prev, [subjectId]: '' }));
   };
 
-    const beginEditSubject = (subject: PyqSubject) => {
+  const beginEditSubject = (subject: PyqSubject) => {
     setEditingSubjectId(subject.id || null);
     setEditingSubject({
       id: subject.id!,
@@ -183,7 +302,7 @@ export default function PYQTracker() {
     // Retained for backward compatibility in stored records.
       cor = Math.min(cor, att);
 
-    await db.pyqTopics.update(topicId, {
+     await db.pyqTopics.update(topicId, {
         attemptedQuestions: att,
         correctQuestions: cor,
         revisionCount: rev,
@@ -200,12 +319,12 @@ export default function PYQTracker() {
     const parsedRev = parseInt((editingTopic as any).revisions, 10) || 0;
 
     if (!parsedTotal || parsedTotal <= 0) {
-      alert("Total questions must be greater than 0");
+      alert('Total questions must be greater than 0');
       return;
     }
 
     if (parsedAtt > parsedTotal || parsedAtt < 0 || parsedRev < 0) {
-      alert("Invalid matrix configuration variables.");
+      alert('Invalid matrix configuration variables.');
       return;
     }
 
@@ -223,10 +342,232 @@ export default function PYQTracker() {
     setEditingTopic(null);
   };
 
+
+  const renderSubjectCard = (subject: PyqSubject, context: { examId?: number; showStandaloneAction?: boolean } = {}) => {
+    const { attempted: subjAttempted, total: subjTotal, progress: subjProgress, topics: sTopics } = getSubjectProgress(subject.id!);
+    const subjectColor = resolveSubjectColor(subject);
+    const isExpanded = expandedSubjectId === subject.id;
+    const isEditingSubject = editingSubjectId === subject.id;
+
+    return (
+      <Card
+        key={`${context.examId || 'standalone'}-${subject.id}`}
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          padding: '1.5rem 2rem',
+          borderLeft: `4px solid ${subjectColor}`
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+          <div style={{ flex: 1 }}>
+            {isEditingSubject ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto auto auto', gap: '0.5rem', alignItems: 'center' }}>
+                <Input
+                  value={editingSubject.name}
+                  onChange={e => setEditingSubject(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder="Subject name"
+                />
+                <Input
+                  type="color"
+                  value={editingSubject.color}
+                  onChange={e => setEditingSubject(prev => ({ ...prev, color: e.target.value }))}
+                  title="Subject color"
+                  style={{ minWidth: '2.5rem', width: '2.75rem', height: '2.3rem', padding: '0.2rem' }}
+                />
+                <Button onClick={saveSubjectEdits} style={{ whiteSpace: 'nowrap' }}>Save</Button>
+                <Button variant="ghost" onClick={() => setEditingSubjectId(null)} style={{ whiteSpace: 'nowrap' }}>Cancel</Button>
+              </div>
+            ) : (
+              <>
+                <h2 style={{ fontSize: '1.5rem' }}>
+                  <SubjectTag name={subject.name} color={subject.color} />
+                </h2>
+                <span className="text-secondary" style={{ fontWeight: 600, fontSize: '0.875rem' }}>
+                  {Math.round(subjProgress)}% Matrix Complete · {subjAttempted}/{subjTotal}
+                </span>
+              </>
+            )}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+            {!isEditingSubject && (
+              <>
+                {context.showStandaloneAction && subject.id && (
+                  <Button
+                    variant="ghost"
+                    style={{ padding: '0.45rem' }}
+                    onClick={() => moveSubjectToStandalone(subject.id!)}
+                    aria-label={`Move ${subject.name} to standalone`}
+                    title="Move to standalone"
+                  >
+                    <MoveRight size={16} />
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  style={{ padding: '0.45rem' }}
+                  onClick={() => beginEditSubject(subject)}
+                  aria-label={`Edit ${subject.name}`}
+                  title="Edit subject"
+                >
+                  <Pencil size={16} />
+                </Button>
+                <Button
+                  variant="ghost"
+                  style={{ padding: '0.45rem', color: 'var(--color-red)', pointerEvents: 'auto', position: 'relative', zIndex: 1 }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    void deleteSubject(subject.id!);
+                  }}
+                  aria-label={`Delete ${subject.name}`}
+                  title="Delete subject"
+                >
+                  <Trash2 size={16} />
+                </Button>
+              </>
+            )}
+            <Button
+              variant="ghost"
+              style={{ padding: '0.5rem' }}
+              onClick={() => setExpandedSubjectId(isExpanded ? null : subject.id!)}
+              aria-label={isExpanded ? `Collapse ${subject.name}` : `Expand ${subject.name}`}
+            >
+              {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+            </Button>
+          </div>
+        </div>
+
+        <ProgressBar progress={subjProgress} tone="green" />
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateRows: isExpanded ? '1fr' : '0fr',
+            opacity: isExpanded ? 1 : 0,
+            transition: 'grid-template-rows 180ms ease, opacity 180ms ease',
+            marginTop: isExpanded ? '1.5rem' : '0'
+          }}
+        >
+          <div style={{ overflow: 'hidden' }}>
+            <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
+              <textarea
+                className="ui-input"
+                rows={2}
+                placeholder="Bulk Add Subtopics (e.g., 'Binary Trees 50' or 'MST')"
+                value={bulkTopicInputs[subject.id!] || ''}
+                onChange={e => setBulkTopicInputs(prev => ({ ...prev, [subject.id!]: e.target.value }))}
+                style={{ resize: 'vertical', width: '100%' }}
+              />
+              <Button onClick={() => handleBulkAddPyqTopics(subject.id!)} disabled={!bulkTopicInputs[subject.id!]?.trim()}>
+                <Plus size={16} /> Build
+              </Button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '1rem', marginTop: '1rem' }}>
+              {sTopics.map(topic => {
+                const isCompleted = topic.attemptedQuestions === topic.totalQuestions;
+
+                return (
+                  <Card key={topic.id} style={{
+                    padding: '1rem',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.75rem',
+                    opacity: isCompleted ? 0.6 : 1
+                  }}>
+                    {editingTopic?.id === topic.id ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        <Input
+                          value={editingTopic?.name || ''}
+                          onChange={e => editingTopic && setEditingTopic({ ...editingTopic, name: e.target.value })}
+                          placeholder="Topic Name"
+                        />
+                        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '0.5rem' }}>
+                          <Input
+                            type="number"
+                            min="0"
+                            value={(editingTopic as any)?.attempted ?? ''}
+                            onChange={e => editingTopic && setEditingTopic({ ...editingTopic, attempted: e.target.value })}
+                            placeholder="Attempts"
+                          />
+                          <Input
+                            type="number"
+                            min="0"
+                            value={(editingTopic as any)?.revisions ?? ''}
+                            onChange={e => editingTopic && setEditingTopic({ ...editingTopic, revisions: e.target.value })}
+                            placeholder="Revisions"
+                          />
+                          <Input
+                            type="number"
+                            min="1"
+                            value={editingTopic?.total || ''}
+                            onChange={e => editingTopic && setEditingTopic({ ...editingTopic, total: e.target.value })}
+                            placeholder="Total Qs"
+                          />
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <Button onClick={saveEdits} style={{ flex: 1, padding: '0.2rem' }}>Save</Button>
+                          <Button variant="ghost" onClick={() => setEditingTopic(null)}>Cancel</Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <div style={{ fontWeight: 600, fontSize: '1rem' }}>
+                            {topic.name}
+                            {isCompleted && (
+                              <CheckCircle
+                                size={14}
+                                style={{ color: 'var(--success-color)', display: 'inline', marginLeft: '0.5rem', marginBottom: '-2px' }}
+                              />
+                            )}
+                          </div>
+                          <Button
+                            variant="ghost"
+                            style={{ padding: '0 0.2rem', fontSize: '0.75rem' }}
+                            onClick={() => setEditingTopic({
+                              id: topic.id!,
+                              name: topic.name,
+                              total: String(topic.totalQuestions),
+                              attempted: String(topic.attemptedQuestions),
+                              revisions: String(topic.revisionCount || 0)
+                            } as any)}
+                          >
+                            Edit
+                          </Button>
+                        </div>
+
+                        <div className="text-secondary" style={{ fontSize: '0.875rem', display: 'flex', justifyContent: 'space-between' }}>
+                          <span>Attempted: <span style={{ color: 'var(--text-primary)' }}>{topic.attemptedQuestions}</span> / {topic.totalQuestions}</span>
+                          <span>Revisions: <span style={{ color: 'var(--text-primary)' }}>{topic.revisionCount || 0}</span></span>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.5rem' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <Button variant="secondary" onClick={() => updateStats(topic.id!, 'att-inc')} disabled={isCompleted} style={{ padding: '0.2rem', fontSize: '0.75rem' }}>+1 Att</Button>
+                            <Button variant="ghost" onClick={() => updateStats(topic.id!, 'att-dec')} style={{ padding: '0.2rem', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>-1</Button>
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <Button variant="secondary" onClick={() => updateStats(topic.id!, 'rev-inc')} style={{ padding: '0.2rem', fontSize: '0.75rem' }}>+1 Rev ({topic.revisionCount || 0})</Button>
+                            <Button variant="ghost" onClick={() => updateStats(topic.id!, 'rev-dec')} style={{ padding: '0.2rem', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>-1</Button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </Card>
+    );
+  };
+
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-      
-      {/* Top Level Analytics */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
         <div>
           <h1 style={{ fontSize: '1.875rem', marginBottom: '0.5rem' }}>PYQ Matrix Dashboard</h1>
@@ -236,13 +577,11 @@ export default function PYQTracker() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
           <Card>
             <div className="text-secondary" style={{ fontSize: '0.875rem', marginBottom: '0.5rem' }}>Overall Progress</div>
-            <div style={{ fontSize: '1.75rem', fontWeight: 600 }}>{totalAttempted} <span className="text-muted" style={{fontSize: '1rem'}}>/ {totalQuestionsPool}</span></div>
+            <div style={{ fontSize: '1.75rem', fontWeight: 600 }}>{totalAttempted} <span className="text-muted" style={{ fontSize: '1rem' }}>/ {totalQuestionsPool}</span></div>
           </Card>
           <Card>
-           <div className="text-secondary" style={{ fontSize: '0.875rem', marginBottom: '0.5rem' }}>Total Revisions Done</div>
-            <div style={{ fontSize: '1.75rem', fontWeight: 600 }}>
-              {totalRevisionsDone}
-            </div>
+            <div className="text-secondary" style={{ fontSize: '0.875rem', marginBottom: '0.5rem' }}>Total Revisions Done</div>
+            <div style={{ fontSize: '1.75rem', fontWeight: 600 }}>{totalRevisionsDone}</div>
           </Card>
           <Card>
             <div className="text-secondary" style={{ fontSize: '0.875rem', marginBottom: '0.5rem' }}>Weak Subtopics Detected</div>
@@ -252,258 +591,137 @@ export default function PYQTracker() {
           </Card>
         </div>
       </div>
-
+      <Card>
+        <h3 style={{ fontSize: '1rem', marginBottom: '1rem', fontWeight: 500 }}>Exams</h3>
+        <form onSubmit={handleAddExam} style={{ display: 'flex', gap: '1rem' }}>
+          <Input
+            placeholder="Exam Name (e.g. GATE, CAT, UPSC)"
+            value={newExamName}
+            onChange={e => setNewExamName(e.target.value)}
+          />
+          <Button type="submit"><Plus size={16} /> Create Exam</Button>
+        </form>
+      </Card>
       <Card>
         <h3 style={{ fontSize: '1rem', marginBottom: '1rem', fontWeight: 500 }}>Create Subject Module</h3>
         <form onSubmit={handleAddSubject} style={{ display: 'flex', gap: '1rem' }}>
-          <Input 
-            placeholder="Subject Name (e.g. Operating Systems)" 
-            value={newSubjectName} 
-            onChange={e => setNewSubjectName(e.target.value)} 
+          <Input
+            placeholder="Subject Name (e.g. Operating Systems)"
+            value={newSubjectName}
+            onChange={e => setNewSubjectName(e.target.value)}
           />
-          <Button type="submit"><Plus size={16}/> Initialize</Button>
+          <Button type="submit"><Plus size={16} /> Initialize</Button>
         </form>
       </Card>
 
-      {/* Grid of Subject Cards */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-        {subjects.length === 0 ? (
-          <Card style={{ padding: '3rem', textAlign: 'center' }}>
-            <p className="text-secondary">Start by adding your first subject</p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <h2 style={{ fontSize: '1.2rem' }}>Exams</h2>
+        {exams.length === 0 ? (
+          <Card>
+            <p className="text-secondary">No exams yet. Create one to organize PYQ subjects exam-wise.</p>
           </Card>
-        ) : (
-          subjects.map(subject => {
-            const sTopics = pyqTopics.filter(t => getPyqTopicSubjectId(t) === subject.id);
+        ) : exams.map((exam: PyqExam) => {
+          const stats = getExamStats(exam.id!);
+          const examSubjects = stats.subjectIds
+            .map(subjectId => subjects.find(subject => subject.id === subjectId))
+            .filter((subject): subject is PyqSubject => Boolean(subject));
+          const availableSubjects = subjects.filter(subject => !stats.subjectIds.includes(subject.id!));
+          const isExpanded = expandedExamId === exam.id;
 
-            // Stable Sorting: Primary(Strength), Secondary(Progress Asc)
-            const strengthRank = { 'Weak': 1, 'Average': 2, 'Strong': 3 };
-            sTopics.sort((a, b) => {
-              const rankA = strengthRank[deriveStrength(a)];
-              const rankB = strengthRank[deriveStrength(b)];
-              if (rankA !== rankB) return rankA - rankB;
-              return getTopicProgress(a) - getTopicProgress(b);
-            });
-
-            const subjAttempted = sTopics.reduce((acc, t) => acc + t.attemptedQuestions, 0);
-            const subjTotal = sTopics.reduce((acc, t) => acc + t.totalQuestions, 0);
-            const subjProgress = subjTotal === 0 ? 0 : (subjAttempted / subjTotal) * 100;
-            const subjectColor = resolveSubjectColor(subject);
-            const isExpanded = expandedSubjectId === subject.id;
-            const isEditingSubject = editingSubjectId === subject.id;
-
-            return (
-              <Card
-                key={subject.id}
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  padding: '1.5rem 2rem',
-                  borderLeft: `4px solid ${subjectColor}`
-                }}
-              >
-                {/* Subject Header */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
-                  <div style={{ flex: 1 }}>
-                    {isEditingSubject ? (
-                      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto auto auto', gap: '0.5rem', alignItems: 'center' }}>
-                        <Input
-                          value={editingSubject.name}
-                          onChange={e => setEditingSubject(prev => ({ ...prev, name: e.target.value }))}
-                          placeholder="Subject name"
-                        />
-                        <Input
-                          type="color"
-                          value={editingSubject.color}
-                          onChange={e => setEditingSubject(prev => ({ ...prev, color: e.target.value }))}
-                          title="Subject color"
-                          style={{ minWidth: '2.5rem', width: '2.75rem', height: '2.3rem', padding: '0.2rem' }}
-                        />
-                        <Button onClick={saveSubjectEdits} style={{ whiteSpace: 'nowrap' }}>Save</Button>
-                        <Button variant="ghost" onClick={() => setEditingSubjectId(null)} style={{ whiteSpace: 'nowrap' }}>Cancel</Button>
-                      </div>
-                    ) : (
-                      <>
-                        <h2 style={{ fontSize: '1.5rem' }}>
-                          <SubjectTag name={subject.name} color={subject.color} />
-                        </h2>
-                        <span className="text-secondary" style={{ fontWeight: 600, fontSize: '0.875rem' }}>
-                          {Math.round(subjProgress)}% Matrix Complete
-                        </span>
-                      </>
-                    )}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                    {!isEditingSubject && (
-                      <>
-                        <Button
-                          variant="ghost"
-                          style={{ padding: '0.45rem' }}
-                          onClick={() => beginEditSubject(subject)}
-                          aria-label={`Edit ${subject.name}`}
-                          title="Edit subject"
-                        >
-                          <Pencil size={16} />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          style={{ padding: '0.45rem', color: 'var(--color-red)', pointerEvents: 'auto', position: 'relative', zIndex: 1 }}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            void deleteSubject(subject.id!);
-                          }}
-                          aria-label={`Delete ${subject.name}`}
-                          title="Delete subject"
-                        >
-                          <Trash2 size={16} />
-                        </Button>
-                      </>
-                    )}
-                    <Button
-                      variant="ghost"
-                      style={{ padding: '0.5rem' }}
-                      onClick={() => setExpandedSubjectId(isExpanded ? null : subject.id!)}
-                      aria-label={isExpanded ? `Collapse ${subject.name}` : `Expand ${subject.name}`}
-                    >
-                      {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-                    </Button>
-                  </div>
+          return (
+            <Card key={exam.id} style={{ padding: '1.25rem 1.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+                <div style={{ flex: 1 }}>
+                  <h3 style={{ fontSize: '1.15rem', marginBottom: '0.25rem' }}>{exam.name}</h3>
+                  <span className="text-secondary" style={{ fontSize: '0.875rem' }}>
+                    {stats.done}/{stats.total} solved · {Math.round(stats.percent)}% complete
+                  </span>
                 </div>
 
-                <ProgressBar progress={subjProgress} tone="green" />
-
-                {/* Expandable Content */}
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateRows: isExpanded ? '1fr' : '0fr',
-                    opacity: isExpanded ? 1 : 0,
-                    transition: 'grid-template-rows 180ms ease, opacity 180ms ease',
-                    marginTop: isExpanded ? '1.5rem' : '0'
-                  }}
+                <Button
+                  variant="ghost"
+                  style={{ padding: '0.4rem' }}
+                  onClick={() => setExpandedExamId(isExpanded ? null : exam.id!)}
+                  aria-label={isExpanded ? `Collapse ${exam.name}` : `Expand ${exam.name}`}
                 >
-                  <div style={{ overflow: 'hidden' }}>
+                  {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                </Button>
+              </div>
+              <ProgressBar progress={stats.percent} tone="green" />
 
-                    {/* Bulk Input for Subtopics */}
-                    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
-                      <textarea 
-                        className="ui-input" 
-                        rows={2} 
-                        placeholder="Bulk Add Subtopics (e.g., 'Binary Trees 50' or 'MST')"
-                        value={bulkTopicInputs[subject.id!] || ''}
-                        onChange={e => setBulkTopicInputs(prev => ({ ...prev, [subject.id!]: e.target.value }))}
-                        style={{ resize: 'vertical', width: '100%' }}
-                      />
-                      <Button onClick={() => handleBulkAddPyqTopics(subject.id!)} disabled={!bulkTopicInputs[subject.id!]?.trim()}>
-                        <Plus size={16}/> Build
+              <div style={{
+                display: 'grid',
+                gridTemplateRows: isExpanded ? '1fr' : '0fr',
+                opacity: isExpanded ? 1 : 0,
+                transition: 'grid-template-rows 180ms ease, opacity 180ms ease'
+              }}>
+                <div style={{ overflow: 'hidden' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto auto', gap: '0.5rem', marginTop: '1rem' }}>
+                    <Input
+                      placeholder="New subject for this exam"
+                      value={newExamSubjectByExam[exam.id!] || ''}
+                      onChange={e => setNewExamSubjectByExam(prev => ({ ...prev, [exam.id!]: e.target.value }))}
+                    />
+                    <select
+                      className="ui-input"
+                      value={subjectPickerByExam[exam.id!] || ''}
+                      onChange={e => setSubjectPickerByExam(prev => ({ ...prev, [exam.id!]: Number(e.target.value) || 0 }))}
+                    >
+                      <option value="">Select existing subject</option>
+                      {availableSubjects.map(subject => (
+                        <option key={subject.id} value={subject.id}>{subject.name}</option>
+                      ))}
+                    </select>
+                    <Button onClick={() => addSubjectInsideExam(exam.id!)} disabled={!newExamSubjectByExam[exam.id!]?.trim()}>
+                      <Plus size={16} /> Add New
+                    </Button>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          const selectedId = subjectPickerByExam[exam.id!];
+                          if (!selectedId) return;
+                          void linkSubjectToExam(exam.id!, selectedId, false);
+                        }}
+                        disabled={!subjectPickerByExam[exam.id!]}
+                      >
+                        <Link2 size={16} /> Link
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          const selectedId = subjectPickerByExam[exam.id!];
+                          if (!selectedId) return;
+                          void linkSubjectToExam(exam.id!, selectedId, true);
+                        }}
+                        disabled={!subjectPickerByExam[exam.id!]}
+                      >
+                        <MoveRight size={16} /> Move
                       </Button>
                     </div>
+                    </div>
 
-                    {/* Subtopic List */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '1rem', marginTop: '1rem' }}>
-                      {sTopics.map(topic => {
-                        const isCompleted = topic.attemptedQuestions === topic.totalQuestions;
-            
-                        return (
-                          <Card key={topic.id} style={{ 
-                            padding: '1rem', 
-                            display: 'flex', 
-                            flexDirection: 'column', 
-                            gap: '0.75rem',
-                            opacity: isCompleted ? 0.6 : 1
-                          }}>
-                            {editingTopic?.id === topic.id ? (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                <Input
-                                  value={editingTopic?.name || ''}
-                                  onChange={e => editingTopic && setEditingTopic({...editingTopic, name: e.target.value})}
-                                  placeholder="Topic Name"
-                                />
-                                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '0.5rem' }}>
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    value={(editingTopic as any)?.attempted ?? ''}
-                                    onChange={e => editingTopic && setEditingTopic({...editingTopic, attempted: e.target.value})}
-                                    placeholder="Attempts"
-                                  />
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    value={(editingTopic as any)?.revisions ?? ''}
-                                    onChange={e => editingTopic && setEditingTopic({...editingTopic, revisions: e.target.value})}
-                                    placeholder="Revisions"
-                                  />
-                                  <Input
-                                    type="number"
-                                    min="1"
-                                    value={editingTopic?.total || ''}
-                                    onChange={e => editingTopic && setEditingTopic({...editingTopic, total: e.target.value})}
-                                    placeholder="Total Qs"
-                                  />
-                                </div>
-                                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                  <Button onClick={saveEdits} style={{ flex: 1, padding: '0.2rem' }}>Save</Button>
-                                  <Button variant="ghost" onClick={() => setEditingTopic(null)}>Cancel</Button>
-                                </div>
-                              </div>
-                            ) : (
-                              <>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                  <div style={{ fontWeight: 600, fontSize: '1rem' }}>
-                                    {topic.name}
-                                    {isCompleted && (
-                                      <CheckCircle
-                                        size={14}
-                                        style={{ color: 'var(--success-color)', display: 'inline', marginLeft: '0.5rem', marginBottom: '-2px' }}
-                                      />
-                                    )}
-                                  </div>
-                                  <Button
-                                    variant="ghost"
-                                    style={{ padding: '0 0.2rem', fontSize: '0.75rem' }}
-                                    onClick={() => setEditingTopic({
-                                      id: topic.id!,
-                                      name: topic.name,
-                                      total: String(topic.totalQuestions),
-                                      attempted: String(topic.attemptedQuestions),
-                                      revisions: String(topic.revisionCount || 0)
-                                    } as any)}
-                                  >
-                                    Edit
-                                  </Button>
-                                </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
+                    {examSubjects.length === 0 ? (
+                      <Card>
+                        <p className="text-secondary">No subjects linked to this exam yet.</p>
+                      </Card>
+                    ) : examSubjects.map(subject => renderSubjectCard(subject, { examId: exam.id, showStandaloneAction: true }))}
+                  </div>
+                </div>
+              </div>
+            </Card>
+          );
+        })}
+      </div>
 
-                                <div className="text-secondary" style={{ fontSize: '0.875rem', display: 'flex', justifyContent: 'space-between' }}>
-                                  <span>Attempted: <span style={{ color: 'var(--text-primary)' }}>{topic.attemptedQuestions}</span> / {topic.totalQuestions}</span>
-                                  <span>Revisions: <span style={{ color: 'var(--text-primary)' }}>{topic.revisionCount || 0}</span></span>
-                                </div>
-
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.5rem' }}>
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                    <Button variant="secondary" onClick={() => updateStats(topic.id!, 'att-inc')} disabled={isCompleted} style={{ padding: '0.2rem', fontSize: '0.75rem' }}>+1 Att</Button>
-                                    <Button variant="ghost" onClick={() => updateStats(topic.id!, 'att-dec')} style={{ padding: '0.2rem', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>-1</Button>
-
-                                  </div>
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                    <Button variant="secondary" onClick={() => updateStats(topic.id!, 'rev-inc')} style={{ padding: '0.2rem', fontSize: '0.75rem' }}>+1 Rev ({topic.revisionCount || 0})</Button>
-                                    <Button variant="ghost" onClick={() => updateStats(topic.id!, 'rev-dec')} style={{ padding: '0.2rem', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>-1</Button>
-                                  </div>
-                                  </div>
-                              </>
-                            )}
-                          </Card>
-                        );
-                      })}
-                    </div> {/* end subtopic grid */}
-
-                  </div> {/* end overflow:hidden */}
-                </div> {/* end grid-template-rows */}
-
-              </Card>
-            );
-          })
-        )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <h2 style={{ fontSize: '1.2rem' }}>Standalone Subjects</h2>
+        {standaloneSubjects.length === 0 ? (
+          <Card style={{ padding: '2rem', textAlign: 'center' }}>
+            <p className="text-secondary">No standalone subjects yet. Create one, or move a subject out of an exam.</p>
+          </Card>
+        ) : standaloneSubjects.map(subject => renderSubjectCard(subject))}
       </div>
     </div>
   );

@@ -36,11 +36,25 @@ export interface PyqTopic {
 export interface PyqSubject {
   id?: number;
   name: string;
+  standalone?: boolean;
   color?: string;
   createdAt?: number;
   lastUpdated?: number;
 }
 
+export interface PyqExam {
+  id?: number;
+  name: string;
+  createdAt?: number;
+  lastUpdated?: number;
+}
+
+export interface PyqExamSubjectMap {
+  id?: number;
+  examId: number;
+  subjectId: number;
+  createdAt?: number;
+}
 
 export interface StudySession {
   id?: number;
@@ -99,6 +113,8 @@ export interface TestSubject {
 export class GateTrackerDB extends Dexie {
   subjects!: Table<Subject>;
   pyqSubjects!: Table<PyqSubject>;
+  pyqExams!: Table<PyqExam>;
+  pyqExamSubjectMaps!: Table<PyqExamSubjectMap>;
   topics!: Table<Topic>;
   pyqTopics!: Table<PyqTopic>;
   studySessions!: Table<StudySession>;
@@ -186,6 +202,29 @@ export class GateTrackerDB extends Dexie {
       }
     });
 
+        this.version(5).stores({
+      subjects: '++id, name',
+      topics: '++id, subjectId, name',
+      pyqTopics: '++id, pyqSubjectId, subjectId, name',
+      studySessions: '++id, startTime, subjectId',
+      plannerSlots: '++id, date',
+      notes: '++id, subjectId, topicId',
+      tests: '++id, date',
+      testSubjects: '++id, testId, subjectId',
+      pyqSubjects: '++id, name, standalone',
+      pyqExams: '++id, name',
+      pyqExamSubjectMaps: '++id, examId, subjectId, [examId+subjectId]'
+    }).upgrade(async (tx) => {
+      const pyqSubjectsTable = tx.table('pyqSubjects');
+      const subjects = await pyqSubjectsTable.toArray() as PyqSubject[];
+
+      for (const subject of subjects) {
+        if (!subject.id) continue;
+        if (typeof subject.standalone === 'boolean') continue;
+        await pyqSubjectsTable.update(subject.id, { standalone: true, lastUpdated: Date.now() });
+      }
+    });
+
 
     // Native Dexie one-time seeding
     this.on('populate', (tx) => {
@@ -231,10 +270,10 @@ export async function deleteSubjectCascade(subjectId: number) {
 export async function deletePyqSubjectCascade(pyqSubjectId: number) {
   await db.transaction(
     'rw',
-    [db.pyqSubjects, db.pyqTopics],
+    [db.pyqSubjects, db.pyqTopics, db.pyqExamSubjectMaps],
     async () => {
       await db.pyqSubjects.delete(pyqSubjectId);
-
+      await db.pyqExamSubjectMaps.where('subjectId').equals(pyqSubjectId).delete();
       const topics = await db.pyqTopics.toArray();
       const topicIdsToDelete = topics
         .filter(topic =>
