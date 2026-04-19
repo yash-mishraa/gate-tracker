@@ -8,7 +8,7 @@ import {
   type PyqSubject
 } from '../db';
 import { Card, Button, Input, ProgressBar } from '../components/ui';
-import { Plus, CheckCircle, ChevronDown, ChevronUp, Pencil, Trash2, Link2, MoveRight } from 'lucide-react';
+import { Plus, CheckCircle, ChevronDown, ChevronUp, Pencil, Trash2, Copy } from 'lucide-react';
 import { SubjectTag } from '../components/SubjectTag';
 import { getDeterministicSubjectColor, resolveSubjectColor } from '../utils/subjectColors';
 
@@ -18,7 +18,6 @@ export default function PYQTracker() {
   const subjects = useLiveQuery(() => db.pyqSubjects.toArray(), []) || [];
   const pyqTopics = useLiveQuery(() => db.pyqTopics.toArray(), []) || [];
   const exams = useLiveQuery(() => db.pyqExams.toArray(), []) || [];
-  const examSubjectMaps = useLiveQuery(() => db.pyqExamSubjectMaps.toArray(), []) || [];
   
   const [newSubjectName, setNewSubjectName] = useState('');
   const [newExamName, setNewExamName] = useState('');
@@ -70,9 +69,9 @@ export default function PYQTracker() {
   };
 
   const getExamStats = (examId: number) => {
-    const subjectIds = examSubjectMaps
-      .filter(link => link.examId === examId)
-      .map(link => link.subjectId);
+    const subjectIds = subjects
+      .filter(subject => subject.examId === examId)
+      .map(subject => subject.id!)
 
     const totals = subjectIds.reduce(
       (acc, subjectId) => {
@@ -91,25 +90,22 @@ export default function PYQTracker() {
     };
   };
 
-  const standaloneSubjects = subjects.filter(subject => (subject.standalone ?? true));
+  const standaloneSubjects = subjects.filter(subject => subject.examId == null && (subject.standalone ?? true));
 
   // --- Handlers ---
   const handleAddSubject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSubjectName.trim()) return;
     
-    const existing = subjects.find(s => s.name.toLowerCase() === newSubjectName.trim().toLowerCase());
-    
-    if (!existing) {
-      const normalizedName = newSubjectName.trim();
-      await db.pyqSubjects.add({
-        name: normalizedName,
-        color: getDeterministicSubjectColor(normalizedName),
-        standalone: true,
-        createdAt: Date.now(),
-        lastUpdated: Date.now()
-      });
-    }
+    const normalizedName = newSubjectName.trim();
+    await db.pyqSubjects.add({
+      name: normalizedName,
+      examId: undefined,
+      color: getDeterministicSubjectColor(normalizedName),
+      standalone: true,
+      createdAt: Date.now(),
+      lastUpdated: Date.now()
+    });
     
     setNewSubjectName('');
   };
@@ -134,49 +130,46 @@ export default function PYQTracker() {
     const name = (newExamSubjectByExam[examId] || '').trim();
     if (!name) return;
 
-    const duplicate = subjects.find(subject => subject.name.toLowerCase() === name.toLowerCase());
-    if (duplicate?.id) {
-      await linkSubjectToExam(examId, duplicate.id, false);
-      setNewExamSubjectByExam(prev => ({ ...prev, [examId]: '' }));
-      return;
-    }
-
-    await db.transaction('rw', [db.pyqSubjects, db.pyqExamSubjectMaps], async () => {
-      const subjectId = await db.pyqSubjects.add({
+    await db.pyqSubjects.add({
+        examId,
         name,
         color: getDeterministicSubjectColor(name),
         standalone: false,
         createdAt: Date.now(),
         lastUpdated: Date.now()
-      });
 
-      await db.pyqExamSubjectMaps.add({ examId, subjectId, createdAt: Date.now() });
     });
 
     setNewExamSubjectByExam(prev => ({ ...prev, [examId]: '' }));
   };
 
-  const linkSubjectToExam = async (examId: number, subjectId: number, moveIntoExam: boolean) => {
-    await db.transaction('rw', [db.pyqExamSubjectMaps, db.pyqSubjects], async () => {
-      const existing = await db.pyqExamSubjectMaps
-        .where('[examId+subjectId]')
-        .equals([examId, subjectId])
-        .first();
+  const importSubjectToExam = async (examId: number, sourceSubjectId: number) => {
+    const sourceSubject = subjects.find(subject => subject.id === sourceSubjectId);
+    if (!sourceSubject) return;
+    const sourceTopics = pyqTopics.filter(topic => getPyqTopicSubjectId(topic) === sourceSubjectId);
+    await db.transaction('rw', [db.pyqSubjects, db.pyqTopics], async () => {
+      const clonedSubjectId = await db.pyqSubjects.add({
+        examId,
+        name: sourceSubject.name,
+        color: sourceSubject.color || getDeterministicSubjectColor(sourceSubject.name),
+        standalone: false,
+        createdAt: Date.now(),
+        lastUpdated: Date.now()
+      });
 
-      if (!existing) {
-        await db.pyqExamSubjectMaps.add({ examId, subjectId, createdAt: Date.now() });
-      }
-
-      if (moveIntoExam) {
-        await db.pyqSubjects.update(subjectId, { standalone: false, lastUpdated: Date.now() });
+      for (const topic of sourceTopics) {
+        await db.pyqTopics.add({
+          pyqSubjectId: clonedSubjectId,
+          name: topic.name,
+          totalQuestions: topic.totalQuestions,
+          attemptedQuestions: topic.attemptedQuestions,
+          correctQuestions: topic.correctQuestions,
+          revisionCount: topic.revisionCount || 0,
+          lastUpdated: Date.now()
+        });
       }
     });
   };
-
-  const moveSubjectToStandalone = async (subjectId: number) => {
-    await db.pyqSubjects.update(subjectId, { standalone: true, lastUpdated: Date.now() });
-  };
-
 
   const handleBulkAddPyqTopics = async (subjectId: number) => {
     const input = bulkTopicInputs[subjectId];
@@ -239,16 +232,6 @@ export default function PYQTracker() {
     const normalizedName = editingSubject.name.trim();
     if (!normalizedName) {
       alert('Subject name cannot be empty.');
-      return;
-    }
-
-    const duplicate = subjects.find(
-      subject =>
-        subject.id !== editingSubjectId &&
-        subject.name.toLowerCase() === normalizedName.toLowerCase()
-    );
-    if (duplicate) {
-      alert('A subject with this name already exists.');
       return;
     }
 
@@ -343,7 +326,7 @@ export default function PYQTracker() {
   };
 
 
-  const renderSubjectCard = (subject: PyqSubject, context: { examId?: number; showStandaloneAction?: boolean } = {}) => {
+  const renderSubjectCard = (subject: PyqSubject, context: { examId?: number } = {}) => {
     const { attempted: subjAttempted, total: subjTotal, progress: subjProgress, topics: sTopics } = getSubjectProgress(subject.id!);
     const subjectColor = resolveSubjectColor(subject);
     const isExpanded = expandedSubjectId === subject.id;
@@ -392,17 +375,6 @@ export default function PYQTracker() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             {!isEditingSubject && (
               <>
-                {context.showStandaloneAction && subject.id && (
-                  <Button
-                    variant="ghost"
-                    style={{ padding: '0.45rem' }}
-                    onClick={() => moveSubjectToStandalone(subject.id!)}
-                    aria-label={`Move ${subject.name} to standalone`}
-                    title="Move to standalone"
-                  >
-                    <MoveRight size={16} />
-                  </Button>
-                )}
                 <Button
                   variant="ghost"
                   style={{ padding: '0.45rem' }}
@@ -622,10 +594,8 @@ export default function PYQTracker() {
           </Card>
         ) : exams.map((exam: PyqExam) => {
           const stats = getExamStats(exam.id!);
-          const examSubjects = stats.subjectIds
-            .map(subjectId => subjects.find(subject => subject.id === subjectId))
-            .filter((subject): subject is PyqSubject => Boolean(subject));
-          const availableSubjects = subjects.filter(subject => !stats.subjectIds.includes(subject.id!));
+          const examSubjects = subjects.filter(subject => subject.examId === exam.id);
+          const availableSubjects = subjects.filter(subject => subject.examId == null);
           const isExpanded = expandedExamId === exam.id;
 
           return (
@@ -667,7 +637,7 @@ export default function PYQTracker() {
                       value={subjectPickerByExam[exam.id!] || ''}
                       onChange={e => setSubjectPickerByExam(prev => ({ ...prev, [exam.id!]: Number(e.target.value) || 0 }))}
                     >
-                      <option value="">Select existing subject</option>
+                      <option value="">Import existing subject copy</option>
                       {availableSubjects.map(subject => (
                         <option key={subject.id} value={subject.id}>{subject.name}</option>
                       ))}
@@ -681,22 +651,11 @@ export default function PYQTracker() {
                         onClick={() => {
                           const selectedId = subjectPickerByExam[exam.id!];
                           if (!selectedId) return;
-                          void linkSubjectToExam(exam.id!, selectedId, false);
+                          void importSubjectToExam(exam.id!, selectedId);
                         }}
                         disabled={!subjectPickerByExam[exam.id!]}
                       >
-                        <Link2 size={16} /> Link
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() => {
-                          const selectedId = subjectPickerByExam[exam.id!];
-                          if (!selectedId) return;
-                          void linkSubjectToExam(exam.id!, selectedId, true);
-                        }}
-                        disabled={!subjectPickerByExam[exam.id!]}
-                      >
-                        <MoveRight size={16} /> Move
+                        <Copy size={16} /> Import
                       </Button>
                     </div>
                     </div>
@@ -706,7 +665,7 @@ export default function PYQTracker() {
                       <Card>
                         <p className="text-secondary">No subjects linked to this exam yet.</p>
                       </Card>
-                    ) : examSubjects.map(subject => renderSubjectCard(subject, { examId: exam.id, showStandaloneAction: true }))}
+                    ) : examSubjects.map(subject => renderSubjectCard(subject, { examId: exam.id }))}
                   </div>
                 </div>
               </div>

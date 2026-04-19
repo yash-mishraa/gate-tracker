@@ -35,6 +35,7 @@ export interface PyqTopic {
 
 export interface PyqSubject {
   id?: number;
+  examId?: number;
   name: string;
   standalone?: boolean;
   color?: string;
@@ -202,7 +203,7 @@ export class GateTrackerDB extends Dexie {
       }
     });
 
-        this.version(5).stores({
+    this.version(5).stores({
       subjects: '++id, name',
       topics: '++id, subjectId, name',
       pyqTopics: '++id, pyqSubjectId, subjectId, name',
@@ -223,6 +224,100 @@ export class GateTrackerDB extends Dexie {
         if (typeof subject.standalone === 'boolean') continue;
         await pyqSubjectsTable.update(subject.id, { standalone: true, lastUpdated: Date.now() });
       }
+    });
+
+    this.version(6).stores({
+      subjects: '++id, name',
+      topics: '++id, subjectId, name',
+      pyqTopics: '++id, pyqSubjectId, subjectId, name',
+      studySessions: '++id, startTime, subjectId',
+      plannerSlots: '++id, date',
+      notes: '++id, subjectId, topicId',
+      tests: '++id, date',
+      testSubjects: '++id, testId, subjectId',
+      pyqSubjects: '++id, examId, name, standalone, [examId+name]',
+      pyqExams: '++id, name',
+      pyqExamSubjectMaps: '++id, examId, subjectId, [examId+subjectId]'
+    }).upgrade(async (tx) => {
+      const pyqSubjectsTable = tx.table('pyqSubjects');
+      const pyqTopicsTable = tx.table('pyqTopics');
+      const pyqExamSubjectMapsTable = tx.table('pyqExamSubjectMaps');
+
+      const subjects = await pyqSubjectsTable.toArray() as PyqSubject[];
+      const maps = await pyqExamSubjectMapsTable.toArray() as PyqExamSubjectMap[];
+      const topics = await pyqTopicsTable.toArray() as PyqTopic[];
+
+      const topicsBySubjectId = new Map<number, PyqTopic[]>();
+      for (const topic of topics) {
+        const ownerSubjectId = topic.pyqSubjectId ?? topic.subjectId;
+        if (typeof ownerSubjectId !== 'number') continue;
+
+        if (!topicsBySubjectId.has(ownerSubjectId)) {
+          topicsBySubjectId.set(ownerSubjectId, []);
+        }
+        topicsBySubjectId.get(ownerSubjectId)!.push(topic);
+      }
+
+      const examIdsBySubject = new Map<number, number[]>();
+      for (const map of maps) {
+        const existing = examIdsBySubject.get(map.subjectId) || [];
+        if (!existing.includes(map.examId)) existing.push(map.examId);
+        examIdsBySubject.set(map.subjectId, existing);
+      }
+
+      for (const subject of subjects) {
+        if (!subject.id) continue;
+
+        const linkedExamIds = (examIdsBySubject.get(subject.id) || []).sort((a, b) => a - b);
+        if (linkedExamIds.length === 0) {
+          await pyqSubjectsTable.update(subject.id, {
+            examId: undefined,
+            standalone: true,
+            lastUpdated: Date.now()
+          });
+          continue;
+        }
+
+        const [primaryExamId, ...otherExamIds] = linkedExamIds;
+        await pyqSubjectsTable.update(subject.id, {
+          examId: primaryExamId,
+          standalone: false,
+          lastUpdated: Date.now()
+        });
+
+        const sourceTopics = topicsBySubjectId.get(subject.id) || [];
+        for (const topic of sourceTopics) {
+          if (!topic.id) continue;
+          await pyqTopicsTable.update(topic.id, {
+            pyqSubjectId: subject.id
+          });
+        }
+
+        for (const examId of otherExamIds) {
+          const clonedSubjectId = await pyqSubjectsTable.add({
+            examId,
+            name: subject.name,
+            standalone: false,
+            color: subject.color || getDeterministicSubjectColor(subject.name),
+            createdAt: Date.now(),
+            lastUpdated: Date.now()
+          }) as number;
+
+          for (const topic of sourceTopics) {
+            await pyqTopicsTable.add({
+              pyqSubjectId: clonedSubjectId,
+              name: topic.name,
+              totalQuestions: topic.totalQuestions,
+              attemptedQuestions: topic.attemptedQuestions,
+              correctQuestions: topic.correctQuestions,
+              revisionCount: topic.revisionCount || 0,
+              lastUpdated: Date.now()
+            });
+          }
+        }
+      }
+
+      await pyqExamSubjectMapsTable.clear();
     });
 
 
