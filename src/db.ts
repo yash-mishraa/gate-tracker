@@ -384,3 +384,34 @@ export async function deletePyqSubjectCascade(pyqSubjectId: number) {
     }
   );
 }
+
+export async function deletePyqExamCascade(pyqExamId: number) {
+  await db.transaction(
+    'rw',
+    [db.pyqExams, db.pyqSubjects, db.pyqTopics, db.pyqExamSubjectMaps],
+    async () => {
+      const examSubjects = await db.pyqSubjects.where('examId').equals(pyqExamId).toArray();
+
+      for (const subject of examSubjects) {
+        if (!subject.id) continue;
+        await db.pyqSubjects.delete(subject.id);
+        await db.pyqExamSubjectMaps.where('subjectId').equals(subject.id).delete();
+        const topics = await db.pyqTopics.toArray();
+        const topicIdsToDelete = topics
+          .filter(topic =>
+            topic.pyqSubjectId === subject.id ||
+            (topic.pyqSubjectId == null && topic.subjectId === subject.id)
+          )
+          .map(topic => topic.id)
+          .filter((id): id is number => typeof id === 'number');
+
+        if (topicIdsToDelete.length > 0) {
+          await db.pyqTopics.bulkDelete(topicIdsToDelete);
+        }
+      }
+
+      await db.pyqExamSubjectMaps.where('examId').equals(pyqExamId).delete();
+      await db.pyqExams.delete(pyqExamId);
+    }
+  );
+}

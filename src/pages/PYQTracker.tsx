@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   db,
+  deletePyqExamCascade,
   deletePyqSubjectCascade,
   type PyqExam,
   type PyqTopic,
@@ -253,6 +254,29 @@ export default function PYQTracker() {
       if (editingSubjectId === subjectId) setEditingSubjectId(null);
     } catch (err) {
       console.error('Delete failed:', err);
+    }
+  };
+
+  const deleteExam = async (exam: PyqExam) => {
+    if (!exam.id) return;
+    const confirmed = window.confirm(`Delete ${exam.name} and all subjects/topics inside it?`);
+    if (!confirmed) return;
+
+    try {
+      await deletePyqExamCascade(exam.id);
+      if (expandedExamId === exam.id) setExpandedExamId(null);
+      setNewExamSubjectByExam(prev => {
+        const next = { ...prev };
+        delete next[exam.id!];
+        return next;
+      });
+      setSubjectPickerByExam(prev => {
+        const next = { ...prev };
+        delete next[exam.id!];
+        return next;
+      });
+    } catch (err) {
+      console.error('Exam delete failed:', err);
     }
   };
 
@@ -607,15 +631,25 @@ export default function PYQTracker() {
                     {stats.done}/{stats.total} solved · {Math.round(stats.percent)}% complete
                   </span>
                 </div>
-
-                <Button
-                  variant="ghost"
-                  style={{ padding: '0.4rem' }}
-                  onClick={() => setExpandedExamId(isExpanded ? null : exam.id!)}
-                  aria-label={isExpanded ? `Collapse ${exam.name}` : `Expand ${exam.name}`}
-                >
-                  {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-                </Button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  <Button
+                    variant="ghost"
+                    style={{ padding: '0.45rem', color: 'var(--color-red)' }}
+                    onClick={() => void deleteExam(exam)}
+                    aria-label={`Delete ${exam.name}`}
+                    title="Delete exam"
+                  >
+                    <Trash2 size={16} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    style={{ padding: '0.4rem' }}
+                    onClick={() => setExpandedExamId(isExpanded ? null : exam.id!)}
+                    aria-label={isExpanded ? `Collapse ${exam.name}` : `Expand ${exam.name}`}
+                  >
+                    {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                  </Button>
+                </div>
               </div>
               <ProgressBar progress={stats.percent} tone="green" />
 
