@@ -75,6 +75,8 @@ export interface PlannerSlot {
   date: string; // YYYY-MM-DD
   startTime: string; // HH:mm
   endTime: string; // HH:mm
+  loggedStartTime?: string; // HH:mm
+  loggedEndTime?: string; // HH:mm
   subjectId: number;
   topicId?: number;
   type: 'lecture' | 'practice' | 'revision' | 'test';

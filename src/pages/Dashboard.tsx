@@ -4,7 +4,7 @@ import { db } from '../db';
 import { Card } from '../components/ui';
 import { LineChart, Line, XAxis, Tooltip, ResponsiveContainer, YAxis, BarChart, Bar, Cell, CartesianGrid, Area } from 'recharts';
 import { resolveSubjectColor } from '../utils/subjectColors';
-import { calculateStreaks, formatMinutesHuman, getCompletedMinutesByDay, getPastNDaysTimeSeries } from '../utils/studyStats';
+import { calculateStreaks, formatMinutesHuman, getCompletedMinutesByDay, getPastNDaysTimeSeries, getSlotActualMinutes, getSlotDurationMinutes } from '../utils/studyStats';
 
 const GATE_TARGET_DATE = new Date('2027-02-07T00:00:00');
 const GATE_TIMELINE_START = new Date('2026-02-07T00:00:00');
@@ -71,18 +71,12 @@ export default function Dashboard() {
   const sessionById = new Map(sessions.map(session => [session.id!, session]));
   const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
-  const getSlotDurationMinutes = (slot: { date: string; startTime: string; endTime: string }) => {
-    const start = new Date(`${slot.date}T${slot.startTime}:00`).getTime();
-    const end = new Date(`${slot.date}T${slot.endTime}:00`).getTime();
-    return Math.max(1, Math.round((end - start) / 60000));
-  };
-
   const todaySlots = plannerSlots.filter(slot => slot.date === todayKey);
   const todayPlannedMinutes = todaySlots.reduce((sum, slot) => sum + getSlotDurationMinutes(slot), 0);
   const todayActualMinutes = todaySlots.reduce((sum, slot) => {
     if (!slot.completed) return sum;
     const linked = slot.linkedSessionId ? sessionById.get(slot.linkedSessionId) : undefined;
-    return sum + (linked?.durationMinutes ?? getSlotDurationMinutes(slot));
+    return sum + getSlotActualMinutes(slot, linked);
   }, 0);
   const todayEfficiency = todayPlannedMinutes > 0 ? Math.round((todayActualMinutes / todayPlannedMinutes) * 100) : 0;
   const todayGapMinutes = todayActualMinutes - todayPlannedMinutes;
@@ -98,7 +92,7 @@ export default function Dashboard() {
     .filter(slot => slot.completed)
     .reduce((acc, slot) => {
       const linked = slot.linkedSessionId ? sessionById.get(slot.linkedSessionId) : undefined;
-      const minutes = linked?.durationMinutes ?? getSlotDurationMinutes(slot);
+      const minutes = getSlotActualMinutes(slot, linked);
       acc.set(slot.subjectId, (acc.get(slot.subjectId) ?? 0) + minutes);
       return acc;
     }, new Map<number, number>());

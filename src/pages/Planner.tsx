@@ -1,17 +1,24 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type PlannerSlot } from '../db';
-import { Card, Button, Input, Select } from '../components/ui';
-import { Plus, CheckCircle, Circle, Trash2 } from 'lucide-react';
+import { Card, Button, Input, Select, ProgressBar } from '../components/ui';
+import { Plus, CheckCircle, Circle, Trash2, Save } from 'lucide-react';
 import { SubjectTag } from '../components/SubjectTag';
 import { resolveSubjectColor } from '../utils/subjectColors';
-import { formatMinutesHuman, getSlotDurationMinutes } from '../utils/studyStats';
+import { formatMinutesHuman, getSlotActualMinutes, getSlotDurationMinutes, getSlotLoggedRange } from '../utils/studyStats';
 
+const getMinutes = (timeStr: string) => {
+  const [h, m] = timeStr.split(':').map(Number);
+  return h * 60 + m;
+};
 
-const getSlotTimestamps = (slot: PlannerSlot) => {
-  const startTime = new Date(`${slot.date}T${slot.startTime}:00`).getTime();
-  const endTime = new Date(`${slot.date}T${slot.endTime}:00`).getTime();
-  return { startTime, endTime };
+const isLoggedRangeInsideSlot = (slot: PlannerSlot, loggedStartTime: string, loggedEndTime: string) => {
+  const plannedStart = getMinutes(slot.startTime);
+  const plannedEnd = getMinutes(slot.endTime);
+  const actualStart = getMinutes(loggedStartTime);
+  const actualEnd = getMinutes(loggedEndTime);
+
+  return actualStart >= plannedStart && actualEnd <= plannedEnd && actualEnd > actualStart;
 };
 
 export default function Planner() {
@@ -26,17 +33,14 @@ export default function Planner() {
     () => db.plannerSlots.where('date').equals(selectedDate).sortBy('startTime'),
     [selectedDate]
   ) || [];
+  const studySessions = useLiveQuery(() => db.studySessions.toArray()) ?? [];
+  const sessionById = new Map(studySessions.map(session => [session.id!, session]));
 
   const syncPlannerSession = async (slot: PlannerSlot) => {
     if (!slot.id) return;
 
     const linkedSession = slot.linkedSessionId ? await db.studySessions.get(slot.linkedSessionId) : undefined;
-    const { startTime: plannedStart, endTime: plannedEnd } = getSlotTimestamps(slot);
-    const plannedDuration = Math.max(1, Math.round((plannedEnd - plannedStart) / 60000));
-
-    const startTime = linkedSession?.startTime ?? plannedStart;
-    const endTime = linkedSession?.endTime ?? plannedEnd;
-    const durationMinutes = linkedSession?.durationMinutes ?? plannedDuration;
+    const { startTime, endTime, durationMinutes } = getSlotLoggedRange(slot, linkedSession);
 
     const existing = (await db.studySessions.filter(s => s.plannerSlotId === slot.id).toArray())[0];
 
@@ -49,10 +53,14 @@ export default function Planner() {
         durationMinutes,
         type: 'planned'
       });
+
+      if (slot.linkedSessionId !== existing.id) {
+        await db.plannerSlots.update(slot.id, { linkedSessionId: existing.id });
+      }
       return;
     }
 
-    await db.studySessions.add({
+    const linkedSessionId = await db.studySessions.add({
       subjectId: slot.subjectId,
       topicId: slot.topicId,
       startTime,
@@ -63,6 +71,7 @@ export default function Planner() {
       questionsSolved: 0,
       pyqsSolved: 0
     });
+    await db.plannerSlots.update(slot.id, { linkedSessionId });
   };
 
   const clearPlannerSession = async (slot: PlannerSlot) => {
@@ -123,15 +132,36 @@ export default function Planner() {
     await recalculateStudyStats();
   };
 
+  const handleSaveLoggedTime = async (e: React.FormEvent<HTMLFormElement>, slot: PlannerSlot) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!slot.id) return;
+
+    const formData = new FormData(e.currentTarget);
+    const loggedStartTime = String(formData.get('loggedStartTime') || '');
+    const loggedEndTime = String(formData.get('loggedEndTime') || '');
+
+    if (!isLoggedRangeInsideSlot(slot, loggedStartTime, loggedEndTime)) {
+      alert('Log a time range inside the planned block.');
+      return;
+    }
+
+    await db.plannerSlots.update(slot.id, {
+      loggedStartTime,
+      loggedEndTime,
+      completed: true
+    });
+
+    const updatedSlot = await db.plannerSlots.get(slot.id);
+    if (updatedSlot) {
+      await syncPlannerSession(updatedSlot);
+    }
+  };
+
   const handleDelete = async (id?: number) => {
     if (!id) return;
     await db.plannerSlots.delete(id);
     await recalculateStudyStats();
-  };
-
-  const getMinutes = (timeStr: string) => {
-    const [h, m] = timeStr.split(':').map(Number);
-    return h * 60 + m;
   };
 
   const processSlots = (slotsArr: PlannerSlot[]) => {
@@ -160,9 +190,9 @@ export default function Planner() {
 
   const totalPlannedMinutes = slots.reduce((sum, slot) => sum + getSlotDurationMinutes(slot), 0);
   const totalStudiedMinutes = slots.reduce((sum, slot) => {
-
     if (!slot.completed) return sum;
-    return sum + getSlotDurationMinutes(slot);
+    const linked = slot.linkedSessionId ? sessionById.get(slot.linkedSessionId) : undefined;
+    return sum + getSlotActualMinutes(slot, linked);
   }, 0);
   const efficiencyPercent = totalPlannedMinutes > 0
     ? Math.round((totalStudiedMinutes / totalPlannedMinutes) * 100)
@@ -236,6 +266,12 @@ export default function Planner() {
               const subjectColor = resolveSubjectColor(subject);
               const leftPercent = (slot.col / slot.maxCol) * 100;
               const widthPercent = (1 / slot.maxCol) * 100;
+              const linked = slot.linkedSessionId ? sessionById.get(slot.linkedSessionId) : undefined;
+              const plannedMinutes = getSlotDurationMinutes(slot);
+              const actualMinutes = slot.completed ? getSlotActualMinutes(slot, linked) : 0;
+              const progressPercent = plannedMinutes > 0 ? Math.min(100, Math.round((actualMinutes / plannedMinutes) * 100)) : 0;
+              const loggedStartTime = slot.loggedStartTime ?? slot.startTime;
+              const loggedEndTime = slot.loggedEndTime ?? slot.endTime;
 
               return (
                 <Card
@@ -244,16 +280,16 @@ export default function Planner() {
                   style={{
                     position: 'absolute',
                     top: `${startMin}px`,
-                    height: `${height}px`,
+                    minHeight: `${Math.max(height, 154)}px`,
                     left: `${leftPercent}%`,
                     width: `calc(${widthPercent}% - 4px)`,
-                    padding: '0.75rem',
+                    padding: '0.8rem',
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: '0.25rem',
+                    gap: '0.45rem',
                     overflow: 'hidden',
                     zIndex: 10,
-                    opacity: slot.completed ? 0.7 : 1,
+                    opacity: slot.completed ? 0.94 : 1,
                     borderLeft: `4px solid ${subjectColor}`
                   }}
                 >
@@ -274,6 +310,46 @@ export default function Planner() {
                   <div className="text-secondary" style={{ fontSize: '0.75rem' }}>
                     {slot.startTime} - {slot.endTime} • <span style={{ textTransform: 'capitalize' }}>{slot.type}</span>
                   </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.72rem' }}>
+                      <span className="text-secondary">Actual</span>
+                      <span style={{ fontWeight: 600 }}>
+                        {formatMinutesHuman(actualMinutes)} / {formatMinutesHuman(plannedMinutes)}
+                      </span>
+                    </div>
+                    <ProgressBar progress={progressPercent} tone={slot.completed ? 'green' : 'blue'} />
+                  </div>
+                  <form onSubmit={(e) => handleSaveLoggedTime(e, slot)} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto', gap: '0.35rem', alignItems: 'center', marginTop: 'auto' }}>
+                    <Input
+                      aria-label="Actual start time"
+                      name="loggedStartTime"
+                      type="time"
+                      min={slot.startTime}
+                      max={slot.endTime}
+                      defaultValue={loggedStartTime}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ height: 32, padding: '0.3rem 0.45rem', fontSize: '0.75rem' }}
+                    />
+                    <Input
+                      aria-label="Actual end time"
+                      name="loggedEndTime"
+                      type="time"
+                      min={slot.startTime}
+                      max={slot.endTime}
+                      defaultValue={loggedEndTime}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ height: 32, padding: '0.3rem 0.45rem', fontSize: '0.75rem' }}
+                    />
+                    <Button
+                      type="submit"
+                      variant="secondary"
+                      title="Save actual time"
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ width: 32, height: 32, padding: 0, borderRadius: 6 }}
+                    >
+                      <Save size={14} />
+                    </Button>
+                  </form>
                 </Card>
               );
             })}

@@ -23,6 +23,42 @@ export const getSlotDurationMinutes = (slot: Pick<PlannerSlot, 'date' | 'startTi
   return Math.max(1, Math.round((end - start) / 60000));
 };
 
+export const getSlotLoggedRange = (
+  slot: Pick<PlannerSlot, 'date' | 'startTime' | 'endTime' | 'loggedStartTime' | 'loggedEndTime'>,
+  linkedSession?: StudySession
+) => {
+  if (slot.loggedStartTime && slot.loggedEndTime) {
+    const startTime = new Date(`${slot.date}T${slot.loggedStartTime}:00`).getTime();
+    const endTime = new Date(`${slot.date}T${slot.loggedEndTime}:00`).getTime();
+    const durationMinutes = Math.max(0, Math.round((endTime - startTime) / 60000));
+
+    if (Number.isFinite(startTime) && Number.isFinite(endTime) && durationMinutes > 0) {
+      return { startTime, endTime, durationMinutes };
+    }
+  }
+
+  if (linkedSession) {
+    return {
+      startTime: linkedSession.startTime,
+      endTime: linkedSession.endTime,
+      durationMinutes: linkedSession.durationMinutes
+    };
+  }
+
+  const startTime = new Date(`${slot.date}T${slot.startTime}:00`).getTime();
+  const endTime = new Date(`${slot.date}T${slot.endTime}:00`).getTime();
+
+  return {
+    startTime,
+    endTime,
+    durationMinutes: getSlotDurationMinutes(slot)
+  };
+};
+
+export const getSlotActualMinutes = (slot: PlannerSlot, linkedSession?: StudySession) => {
+  return getSlotLoggedRange(slot, linkedSession).durationMinutes;
+};
+
 export const getCompletedMinutesByDay = (plannerSlots: PlannerSlot[], sessions: StudySession[]) => {
   const sessionById = new Map(sessions.map(s => [s.id!, s]));
   const minutesByDay = new Map<string, number>();
@@ -30,7 +66,7 @@ export const getCompletedMinutesByDay = (plannerSlots: PlannerSlot[], sessions: 
   plannerSlots.forEach(slot => {
     if (!slot.completed) return;
     const linked = slot.linkedSessionId ? sessionById.get(slot.linkedSessionId) : undefined;
-    const duration = linked?.durationMinutes ?? getSlotDurationMinutes(slot);
+    const duration = getSlotActualMinutes(slot, linked);
     minutesByDay.set(slot.date, (minutesByDay.get(slot.date) ?? 0) + duration);
   });
 
@@ -44,7 +80,7 @@ export const getCompletedMinutesBySubject = (plannerSlots: PlannerSlot[], sessio
   plannerSlots.forEach(slot => {
     if (!slot.completed) return;
     const linked = slot.linkedSessionId ? sessionById.get(slot.linkedSessionId) : undefined;
-    const duration = linked?.durationMinutes ?? getSlotDurationMinutes(slot);
+    const duration = getSlotActualMinutes(slot, linked);
     minutesBySubject.set(slot.subjectId, (minutesBySubject.get(slot.subjectId) ?? 0) + duration);
   });
 

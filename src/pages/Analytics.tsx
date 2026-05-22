@@ -4,7 +4,7 @@ import { Card } from '../components/ui';
 import { AlertTriangle, Clock, Target, Ghost, TrendingUp, Gauge, CalendarCheck } from 'lucide-react';
 import { isSameDay, subDays, format } from 'date-fns';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell, LineChart, Line, CartesianGrid, Area } from 'recharts';
-import { formatMinutesHuman, getCompletedMinutesByDay, getCompletedMinutesBySubject, getPastNDaysTimeSeries } from '../utils/studyStats';
+import { formatMinutesHuman, getCompletedMinutesByDay, getCompletedMinutesBySubject, getPastNDaysTimeSeries, getSlotActualMinutes, getSlotDurationMinutes, getSlotLoggedRange } from '../utils/studyStats';
 
 export default function Analytics() {
   const subjects: Subject[] = useLiveQuery(() => db.subjects.toArray()) ?? [];
@@ -23,9 +23,7 @@ export default function Analytics() {
     .filter(slot => slot.completed)
     .map(slot => {
       const linked = slot.linkedSessionId ? studySessions.find(session => session.id === slot.linkedSessionId) : undefined;
-      const startTime = new Date(`${slot.date}T${slot.startTime}:00`).getTime();
-      const endTime = new Date(`${slot.date}T${slot.endTime}:00`).getTime();
-      const durationMinutes = linked?.durationMinutes ?? Math.max(1, Math.round((endTime - startTime) / 60000));
+      const { startTime, endTime, durationMinutes } = getSlotLoggedRange(slot, linked);
       return {
         subjectId: slot.subjectId,
         startTime,
@@ -112,17 +110,11 @@ export default function Analytics() {
   if (focusWarnings.length === 0) {
     focusWarnings.push('Your session distribution looks balanced right now.');
   }
-  const getSlotDurationMinutes = (slot: { date: string; startTime: string; endTime: string }) => {
-    const start = new Date(`${slot.date}T${slot.startTime}:00`).getTime();
-    const end = new Date(`${slot.date}T${slot.endTime}:00`).getTime();
-    return Math.max(1, Math.round((end - start) / 60000));
-  };
-
   const totalPlannedMinutes = plannerSlots.reduce((sum, slot) => sum + getSlotDurationMinutes(slot), 0);
   const totalStudiedMinutes = plannerSlots.reduce((sum, slot) => {
     if (!slot.completed) return sum;
     const linked = slot.linkedSessionId ? sessionById.get(slot.linkedSessionId) : undefined;
-    return sum + (linked?.durationMinutes ?? getSlotDurationMinutes(slot));
+    return sum + getSlotActualMinutes(slot, linked);
   }, 0);
   const efficiency = totalPlannedMinutes > 0 ? Math.round((totalStudiedMinutes / totalPlannedMinutes) * 100) : 0;
   const todaySlots = plannerSlots.filter(slot => slot.date === todayKey);
@@ -130,7 +122,7 @@ export default function Analytics() {
   const todayActualMinutes = todaySlots.reduce((sum, slot) => {
     if (!slot.completed) return sum;
     const linked = slot.linkedSessionId ? sessionById.get(slot.linkedSessionId) : undefined;
-    return sum + (linked?.durationMinutes ?? getSlotDurationMinutes(slot));
+    return sum + getSlotActualMinutes(slot, linked);
   }, 0);
   const todayEfficiency = todayPlannedMinutes > 0 ? Math.round((todayActualMinutes / todayPlannedMinutes) * 100) : 0;
   const todayGapMinutes = todayActualMinutes - todayPlannedMinutes;
