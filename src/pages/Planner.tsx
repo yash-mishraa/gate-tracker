@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type PlannerSlot } from '../db';
-import { Card, Button, Input, Select, ProgressBar } from '../components/ui';
+import { Card, Button, Input, Select } from '../components/ui';
 import { Plus, CheckCircle, Circle, Trash2, Save } from 'lucide-react';
 import { SubjectTag } from '../components/SubjectTag';
 import { resolveSubjectColor } from '../utils/subjectColors';
@@ -272,6 +272,7 @@ export default function Planner() {
               const progressPercent = plannedMinutes > 0 ? Math.min(100, Math.round((actualMinutes / plannedMinutes) * 100)) : 0;
               const loggedStartTime = slot.loggedStartTime ?? slot.startTime;
               const loggedEndTime = slot.loggedEndTime ?? slot.endTime;
+              const progressTone = slot.completed ? subjectColor : 'rgba(255,255,255,0.22)';
 
               return (
                 <Card
@@ -280,46 +281,90 @@ export default function Planner() {
                   style={{
                     position: 'absolute',
                     top: `${startMin}px`,
-                    minHeight: `${Math.max(height, 154)}px`,
+                    minHeight: `${Math.max(height, 124)}px`,
                     left: `${leftPercent}%`,
                     width: `calc(${widthPercent}% - 4px)`,
-                    padding: '0.8rem',
+                    padding: '0.9rem 1rem',
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: '0.45rem',
+                    gap: '0.55rem',
                     overflow: 'hidden',
                     zIndex: 10,
                     opacity: slot.completed ? 0.94 : 1,
-                    borderLeft: `4px solid ${subjectColor}`
+                    borderLeft: `4px solid ${subjectColor}`,
+                    background: 'linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.018))',
+                    boxShadow: '0 10px 24px rgba(0,0,0,0.28)',
+                    borderColor: 'rgba(255,255,255,0.08)'
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <button onClick={(e) => toggleComplete(e, slot)} style={{ color: slot.completed ? 'var(--success-color)' : 'var(--text-secondary)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.55rem', minWidth: 0 }}>
+                      <button
+                        title={slot.completed ? 'Mark incomplete' : 'Mark complete'}
+                        onClick={(e) => toggleComplete(e, slot)}
+                        style={{
+                          color: slot.completed ? subjectColor : 'var(--text-secondary)',
+                          width: 22,
+                          height: 22,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0
+                        }}
+                      >
                         {slot.completed ? <CheckCircle size={18} /> : <Circle size={18} />}
                       </button>
-                      <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>
-                        <SubjectTag name={subject?.name || 'Unknown'} color={subject?.color} />
-                      </span>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', minWidth: 0 }}>
+                        <span style={{ fontWeight: 600, fontSize: '0.875rem', minWidth: 0 }}>
+                          <SubjectTag name={subject?.name || 'Unknown'} color={subject?.color} />
+                        </span>
+                        <div className="text-secondary" style={{ fontSize: '0.75rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {slot.startTime} - {slot.endTime} • <span style={{ textTransform: 'capitalize' }}>{slot.type}</span>
+                        </div>
+                      </div>
                     </div>
-                    <Button variant="ghost" onClick={(e) => { e.stopPropagation(); handleDelete(slot.id); }} style={{ padding: '0.2rem', color: 'var(--danger-color)' }}>
+                    <Button variant="ghost" title="Delete block" onClick={(e) => { e.stopPropagation(); handleDelete(slot.id); }} style={{ width: 28, height: 28, padding: 0, color: 'var(--danger-color)', flexShrink: 0 }}>
                       <Trash2 size={14} />
                     </Button>
                   </div>
                   
-                  <div className="text-secondary" style={{ fontSize: '0.75rem' }}>
-                    {slot.startTime} - {slot.endTime} • <span style={{ textTransform: 'capitalize' }}>{slot.type}</span>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.72rem' }}>
-                      <span className="text-secondary">Actual</span>
-                      <span style={{ fontWeight: 600 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.72rem', gap: '0.75rem' }}>
+                      <span className="text-secondary">Logged focus</span>
+                      <span style={{ fontWeight: 600, color: slot.completed ? 'var(--text-primary)' : 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                         {formatMinutesHuman(actualMinutes)} / {formatMinutesHuman(plannedMinutes)}
                       </span>
                     </div>
-                    <ProgressBar progress={progressPercent} tone={slot.completed ? 'green' : 'blue'} />
+                    <div style={{ height: 5, borderRadius: 999, background: 'rgba(255,255,255,0.055)', overflow: 'hidden' }}>
+                      <div
+                        style={{
+                          width: `${progressPercent}%`,
+                          height: '100%',
+                          borderRadius: 999,
+                          background: progressTone,
+                          boxShadow: slot.completed ? `0 0 16px ${subjectColor}55` : 'none',
+                          transition: 'width 0.35s ease'
+                        }}
+                      />
+                    </div>
                   </div>
-                  <form onSubmit={(e) => handleSaveLoggedTime(e, slot)} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto', gap: '0.35rem', alignItems: 'center', marginTop: 'auto' }}>
+                  <form
+                    onSubmit={(e) => handleSaveLoggedTime(e, slot)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: '0.35rem',
+                      width: 'fit-content',
+                      maxWidth: '100%',
+                      marginTop: 'auto',
+                      padding: '0.32rem',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: 8,
+                      background: 'rgba(255,255,255,0.035)'
+                    }}
+                  >
+                    <span className="text-muted" style={{ fontSize: '0.68rem', padding: '0 0.25rem', whiteSpace: 'nowrap' }}>Actual</span>
                     <Input
                       aria-label="Actual start time"
                       name="loggedStartTime"
@@ -328,8 +373,9 @@ export default function Planner() {
                       max={slot.endTime}
                       defaultValue={loggedStartTime}
                       onClick={(e) => e.stopPropagation()}
-                      style={{ height: 32, padding: '0.3rem 0.45rem', fontSize: '0.75rem' }}
+                      style={{ width: 92, height: 30, padding: '0.25rem 0.45rem', fontSize: '0.72rem', background: 'rgba(255,255,255,0.04)' }}
                     />
+                    <span className="text-muted" style={{ fontSize: '0.72rem' }}>-</span>
                     <Input
                       aria-label="Actual end time"
                       name="loggedEndTime"
@@ -338,14 +384,14 @@ export default function Planner() {
                       max={slot.endTime}
                       defaultValue={loggedEndTime}
                       onClick={(e) => e.stopPropagation()}
-                      style={{ height: 32, padding: '0.3rem 0.45rem', fontSize: '0.75rem' }}
+                      style={{ width: 92, height: 30, padding: '0.25rem 0.45rem', fontSize: '0.72rem', background: 'rgba(255,255,255,0.04)' }}
                     />
                     <Button
                       type="submit"
                       variant="secondary"
                       title="Save actual time"
                       onClick={(e) => e.stopPropagation()}
-                      style={{ width: 32, height: 32, padding: 0, borderRadius: 6 }}
+                      style={{ width: 30, height: 30, padding: 0, borderRadius: 6, background: 'rgba(255,255,255,0.05)' }}
                     >
                       <Save size={14} />
                     </Button>
